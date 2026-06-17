@@ -33,6 +33,19 @@ type Config struct {
 	// CookieSecure controls the Secure flag on the session cookie. Disable only
 	// for local HTTP development.
 	CookieSecure bool
+
+	// PeatNodeAddr is the gRPC target of the local peat sidecar node that backs
+	// data-source storage, e.g. "localhost:50051" or
+	// "peat-node-peat-node.peat-system.svc:50051". peat owns persistence,
+	// disconnected operation, and CRDT mesh sync.
+	PeatNodeAddr string
+
+	// PeatCollection is the peat document collection used for data sources.
+	PeatCollection string
+
+	// PeatTLS dials the peat node over TLS. Defaults false for the co-located
+	// sidecar pattern (in-pod / localhost plaintext).
+	PeatTLS bool
 }
 
 // Load reads configuration from the environment and validates required fields.
@@ -46,6 +59,9 @@ func Load() (*Config, error) {
 		PostLogoutRedirectURL: envOr("OIDC_POST_LOGOUT_REDIRECT_URL", "http://localhost:3000/"),
 		Scopes:                splitScopes(envOr("OIDC_SCOPES", "openid profile email roles")),
 		CookieSecure:          envOr("COOKIE_SECURE", "false") == "true",
+		PeatNodeAddr:          os.Getenv("PEAT_NODE_ADDR"),
+		PeatCollection:        envOr("PEAT_COLLECTION", "data_sources"),
+		PeatTLS:               envOr("PEAT_TLS", "false") == "true",
 	}
 
 	var missing []string
@@ -57,6 +73,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.ClientSecret == "" {
 		missing = append(missing, "OIDC_CLIENT_SECRET")
+	}
+	if cfg.PeatNodeAddr == "" {
+		missing = append(missing, "PEAT_NODE_ADDR")
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))

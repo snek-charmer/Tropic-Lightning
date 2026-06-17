@@ -1,0 +1,29 @@
+# Helm values for the Zarf deployment. ###ZARF_VAR_*### placeholders are
+# substituted from zarf.yaml variables at `zarf package deploy` time.
+image:
+  repository: keycloak-portal
+  tag: "0.1.0"
+  # Zarf serves the bundled image from the in-cluster registry.
+  pullPolicy: IfNotPresent
+
+config:
+  issuer: "###ZARF_VAR_ISSUER###"
+  clientId: "###ZARF_VAR_CLIENT_ID###"
+  # Redirect URLs are derived from the public host.
+  redirectUrl: "https://###ZARF_VAR_HOST###/auth/callback"
+  postLogoutRedirectUrl: "https://###ZARF_VAR_HOST###/"
+  cookieSecure: true
+  peatNodeAddr: "###ZARF_VAR_PEAT_NODE_ADDR###"
+  peatCollection: data_sources
+  peatTls: ###ZARF_VAR_PEAT_TLS###
+
+clientSecret:
+  value: "###ZARF_VAR_CLIENT_SECRET###"
+
+istio:
+  sidecarInject: true
+  virtualService:
+    enabled: true
+    gateway: "###ZARF_VAR_GATEWAY###"
+    hosts:
+      - "###ZARF_VAR_HOST###"

@@ -16,6 +16,10 @@ config:
   redirectUrl: "https://portal.example.com/auth/callback"
   postLogoutRedirectUrl: "https://portal.example.com/"
   cookieSecure: true
+  # Your peat node's gRPC endpoint (the data-source backend).
+  peatNodeAddr: "peat-node-peat-node.peat-system.svc:50051"
+  peatCollection: "data_sources"
+  peatTls: false
 
 clientSecret:
   # For local dev, let the chart create the Secret from this value.

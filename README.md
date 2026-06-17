@@ -32,6 +32,41 @@ present (API clients), otherwise from the session cookie (browser navigation).
 | GET    | `/dashboard`     | any authenticated user               |
 | GET    | `/api/me`        | any authenticated user (JSON claims) |
 | GET    | `/api/admin`     | requires `admin` realm role (JSON)   |
+| GET    | `/datasources`   | `admin` realm role (HTML page)       |
+| POST   | `/datasources`   | `admin` (HTML form create)           |
+| POST   | `/datasources/{id}/delete` | `admin` (HTML form delete) |
+| GET    | `/api/datasources` | `admin` (JSON list)                |
+| POST   | `/api/datasources` | `admin` (JSON create)              |
+| DELETE | `/api/datasources/{id}` | `admin` (JSON delete)         |
+
+## Data sources (edge / disconnected)
+
+Admins can register **data sources** — external system connections (Postgres,
+S3, HTTP, MQTT, …) described by name, type, endpoint, optional `secret_ref`, and
+an enabled flag. This is built for an **edge node that operates disconnected and
+syncs back when it reconnects** — and the storage layer is what makes that work:
+
+- **peat node is the backend.** Records are stored in a local
+  [peat](https://github.com/defenseunicorns/peat) node — a CRDT mesh datastore —
+  as JSON documents in a collection (`data_sources`), via the `PeatSidecar`
+  gRPC API (`PutDocument`/`GetDocument`/`ListDocuments`/`DeleteDocument`).
+- **Offline-first is peat's job, not ours.** The node persists locally and keeps
+  serving reads/writes while disconnected; it reconciles state across the mesh
+  with Automerge CRDTs (conflict-free, no central server) once peers are
+  reachable. The app holds no separate database and runs no sync worker.
+- **Mesh status, not per-record state.** The UI shows the node's live status
+  from `GetStatus` (connected peers / syncing vs operating disconnected) rather
+  than a hand-rolled per-record sync flag.
+- **Clean seam.** Storage is behind a `Store` interface; the peat-backed
+  implementation lives in `internal/datasource/peatstore.go`, with an in-memory
+  `Store` used for tests.
+
+> Credentials are never stored in the app — `secret_ref` points at where they
+> live (a Kubernetes Secret name, vault path, etc.).
+
+The gRPC contract is vendored at `proto/peat/sidecar/v1/sidecar.proto` and the
+Go client is generated into `internal/peat/sidecarv1/` (see `proto/README.md`).
+peat is pre-1.0, so re-vendor + regenerate when bumping the node version.
 
 ## Configuration
 
@@ -53,6 +88,9 @@ set -a && source .env && set +a
 | `OIDC_SCOPES`                   | no       | Default `openid profile email roles`          |
 | `LISTEN_ADDR`                   | no       | Default `:3000`                               |
 | `COOKIE_SECURE`                 | no       | Set `true` behind HTTPS in production         |
+| `PEAT_NODE_ADDR`                | yes      | peat node gRPC endpoint (e.g. `localhost:50051`) |
+| `PEAT_COLLECTION`               | no       | peat document collection (default `data_sources`) |
+| `PEAT_TLS`                      | no       | Dial the peat node over TLS (default `false`) |
 
 ## Run
 
@@ -123,6 +161,33 @@ helm upgrade --install portal deploy/helm/keycloak-portal \
 
 See the [chart README](deploy/helm/keycloak-portal/README.md) for values,
 image-loading per cluster type, and the issuer-consistency rule.
+
+## Deploy as a Zarf package (air-gapped / edge)
+
+For disconnected delivery, the app ships as a [Zarf](https://zarf.dev) package in
+[`deploy/zarf`](deploy/zarf). It bundles the container image **and** the Helm
+chart into a single `.tar.zst`, and exposes deploy-time config as Zarf variables.
+Keycloak and the peat node are **platform prerequisites** (provided by the
+cluster), not part of this package.
+
+```bash
+# Build the image, then create the package (pulls the image from your daemon).
+docker build -t keycloak-portal:0.1.0 .
+zarf package create deploy/zarf --confirm
+
+# On the target cluster (must be `zarf init`-ed), deploy with your values:
+zarf package deploy zarf-package-keycloak-portal-*.tar.zst --confirm \
+  --set ISSUER="https://keycloak.example.com/realms/portal" \
+  --set HOST="portal.example.com" \
+  --set CLIENT_SECRET="<oidc-client-secret>" \
+  --set PEAT_NODE_ADDR="peat-node-peat-node.peat-system.svc:50051"
+```
+
+Package variables (prompted if omitted): `ISSUER`, `CLIENT_ID`, `CLIENT_SECRET`
+(sensitive), `HOST` (also derives the redirect URLs), `GATEWAY`,
+`PEAT_NODE_ADDR`, `PEAT_TLS`. Redirect URLs are derived from `HOST`. The Zarf
+agent rewrites the bundled image to the in-cluster registry automatically, and
+an SBOM is generated at build time.
 
 ## Keycloak setup (manual / existing Keycloak)
 

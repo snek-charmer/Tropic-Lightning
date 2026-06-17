@@ -23,6 +23,14 @@
     <form method="POST" action="/auth/logout"><button class="btn" type="submit">Sign out</button></form>
   </div>
 
+  {{if .IsAdmin}}
+  <div class="card">
+    <h2>Admin</h2>
+    <p>Manage external system connections that sync across the edge mesh.</p>
+    <a class="btn" href="/datasources">Manage data sources →</a>
+  </div>
+  {{end}}
+
   <div class="card">
     <h2>Realm roles</h2>
     {{if .RealmRoles}}

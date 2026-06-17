@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-// setRequired sets the three mandatory variables to valid values.
+// setRequired sets the mandatory variables to valid values.
 func setRequired(t *testing.T) {
 	t.Setenv("KEYCLOAK_ISSUER", "http://localhost:8080/realms/test")
 	t.Setenv("OIDC_CLIENT_ID", "portal")
 	t.Setenv("OIDC_CLIENT_SECRET", "shh")
+	t.Setenv("PEAT_NODE_ADDR", "localhost:50051")
 }
 
 // clearAll blanks every variable Load reads, so a test starts from a known
@@ -18,6 +19,7 @@ func clearAll(t *testing.T) {
 	for _, k := range []string{
 		"LISTEN_ADDR", "KEYCLOAK_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET",
 		"OIDC_REDIRECT_URL", "OIDC_POST_LOGOUT_REDIRECT_URL", "OIDC_SCOPES", "COOKIE_SECURE",
+		"PEAT_NODE_ADDR", "PEAT_COLLECTION", "PEAT_TLS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -29,7 +31,7 @@ func TestLoadMissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when required vars are missing")
 	}
-	for _, want := range []string{"KEYCLOAK_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"} {
+	for _, want := range []string{"KEYCLOAK_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "PEAT_NODE_ADDR"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}
@@ -60,6 +62,12 @@ func TestLoadDefaults(t *testing.T) {
 	wantScopes := []string{"openid", "profile", "email", "roles"}
 	if strings.Join(cfg.Scopes, " ") != strings.Join(wantScopes, " ") {
 		t.Errorf("Scopes = %v, want %v", cfg.Scopes, wantScopes)
+	}
+	if cfg.PeatCollection != "data_sources" {
+		t.Errorf("PeatCollection = %q, want data_sources", cfg.PeatCollection)
+	}
+	if cfg.PeatTLS {
+		t.Error("PeatTLS should default to false")
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -10,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc/credentials"
+
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
+	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
@@ -40,7 +44,30 @@ func run() error {
 		return err
 	}
 
-	srv, err := web.NewServer(authn, cfg)
+	// Data sources are stored in the local peat node: a CRDT mesh datastore that
+	// works disconnected and reconciles across the mesh on reconnect.
+	var creds credentials.TransportCredentials
+	if cfg.PeatTLS {
+		creds = credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
+	}
+	store, err := datasource.NewPeatStore(cfg.PeatNodeAddr, cfg.PeatCollection, creds)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	slog.Info("data sources backed by peat node", "addr", cfg.PeatNodeAddr, "collection", cfg.PeatCollection, "tls", cfg.PeatTLS)
+
+	// Best-effort status probe so startup logs reflect mesh reachability (not
+	// fatal — the co-located node may come up slightly later).
+	if st, err := store.Status(ctx); err != nil {
+		slog.Warn("peat node not reachable yet", "err", err)
+	} else {
+		slog.Info("peat node reachable", "node_id", st.NodeID, "sync_active", st.SyncActive, "peers", st.ConnectedPeers)
+	}
+
+	dsService := datasource.NewService(store)
+
+	srv, err := web.NewServer(authn, cfg, dsService)
 	if err != nil {
 		return err
 	}

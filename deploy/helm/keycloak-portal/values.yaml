@@ -38,6 +38,14 @@ config:
   cookieSecure: true
   # Container listen address. Keep in sync with service.targetPort below.
   listenAddr: ":3000"
+  # peat node gRPC endpoint backing data-source storage. peat owns persistence,
+  # disconnected operation, and CRDT mesh sync. Default targets a sidecar/node
+  # in the peat-system namespace.
+  peatNodeAddr: "peat-node-peat-node.peat-system.svc:50051"
+  # peat document collection used for data sources.
+  peatCollection: "data_sources"
+  # Dial the peat node over TLS (false for plaintext sidecar/in-mesh traffic).
+  peatTls: false
 
 # -- OIDC client secret handling.
 clientSecret:

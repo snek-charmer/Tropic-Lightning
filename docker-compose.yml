@@ -50,6 +50,15 @@ services:
       OIDC_SCOPES: openid profile email roles
       LISTEN_ADDR: ":3000"
       COOKIE_SECURE: "false"
+      # Data sources are backed by a peat node (CRDT mesh datastore). This compose
+      # stack does NOT run peat — point this at your peat node's gRPC endpoint.
+      # Example: reach a node running in local k3s via its NodePort on the host.
+      PEAT_NODE_ADDR: "host.docker.internal:30369"
+      PEAT_COLLECTION: "data_sources"
+      PEAT_TLS: "false"
+    extra_hosts:
+      # Lets the container reach services on the host (e.g. a k3s NodePort).
+      - "host.docker.internal:host-gateway"
     ports:
       - "3000:3000"
     depends_on:

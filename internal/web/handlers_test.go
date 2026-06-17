@@ -10,13 +10,15 @@ import (
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
+	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
 // newServer wires a web.Server against the fake Keycloak and returns the router.
 func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	t.Helper()
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config())
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -262,5 +264,164 @@ func TestAPIAdminRequiresAdminRole(t *testing.T) {
 	}
 	if code := call([]string{"user"}); code != http.StatusForbidden {
 		t.Errorf("non-admin: status = %d, want 403", code)
+	}
+}
+
+func adminToken(t *testing.T, kc *authtest.Keycloak) string {
+	return kc.SignToken(t, map[string]any{
+		"preferred_username": "alice",
+		"realm_access":       map[string]any{"roles": []string{"admin"}},
+	})
+}
+
+func TestDataSourcesPageRequiresAdmin(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	userTok := kc.SignToken(t, map[string]any{
+		"preferred_username": "bob",
+		"realm_access":       map[string]any{"roles": []string{"user"}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/datasources", nil)
+	req.Header.Set("Authorization", "Bearer "+userTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin /datasources status = %d, want 403", rec.Code)
+	}
+}
+
+func TestDataSourceCreateAndListJSON(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	// Create via JSON API.
+	body := `{"name":"telemetry","type":"postgres","endpoint":"postgres://h:5432/db","enabled":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/datasources", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	var created datasource.DataSource
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+	if created.ID == "" {
+		t.Errorf("created = %+v (expected generated ID)", created)
+	}
+
+	// List should contain it.
+	lreq := httptest.NewRequest(http.MethodGet, "/api/datasources", nil)
+	lreq.Header.Set("Authorization", "Bearer "+tok)
+	lrec := httptest.NewRecorder()
+	h.ServeHTTP(lrec, lreq)
+	if lrec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", lrec.Code)
+	}
+	var list []datasource.DataSource
+	if err := json.Unmarshal(lrec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "telemetry" {
+		t.Errorf("list = %+v", list)
+	}
+}
+
+func TestDataSourceJSONFieldsRoundTrip(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	body := `{"name":"db","type":"postgres","endpoint":"postgres://h/db","secret_ref":"k8s/db","enabled":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/datasources", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var created datasource.DataSource
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.SecretRef != "k8s/db" {
+		t.Errorf("secret_ref = %q, want k8s/db (snake_case JSON must bind)", created.SecretRef)
+	}
+}
+
+func TestDataSourceCreateValidationJSON(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/datasources", strings.NewReader(`{"name":"","type":"bogus"}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestDataSourceDeleteJSON(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	// Create one.
+	req := httptest.NewRequest(http.MethodPost, "/api/datasources",
+		strings.NewReader(`{"name":"x","type":"http","endpoint":"http://e"}`))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	var created datasource.DataSource
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	// Delete it.
+	dreq := httptest.NewRequest(http.MethodDelete, "/api/datasources/"+created.ID, nil)
+	dreq.Header.Set("Authorization", "Bearer "+tok)
+	drec := httptest.NewRecorder()
+	h.ServeHTTP(drec, dreq)
+	if drec.Code != http.StatusNoContent {
+		t.Errorf("delete status = %d, want 204", drec.Code)
+	}
+
+	// Deleting again -> 404.
+	drec2 := httptest.NewRecorder()
+	h.ServeHTTP(drec2, dreq)
+	if drec2.Code != http.StatusNotFound {
+		t.Errorf("second delete status = %d, want 404", drec2.Code)
+	}
+}
+
+func TestDataSourceCreateViaFormRedirects(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	form := url.Values{"name": {"feed"}, "type": {"http"}, "endpoint": {"http://feed"}, "enabled": {"on"}}
+	req := httptest.NewRequest(http.MethodPost, "/datasources", strings.NewReader(form.Encode()))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("form create status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "ok=created") {
+		t.Errorf("redirect location = %q, want ok=created", loc)
 	}
 }

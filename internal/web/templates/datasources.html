@@ -1,0 +1,102 @@
+{{define "datasources.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data Sources · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 860px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    label { display: block; font-weight: 600; margin: .8rem 0 .25rem; font-size: .9rem; }
+    input[type=text], select { width: 100%; padding: .55rem; border: 1px solid #ccc; border-radius: 8px; font: inherit; box-sizing: border-box; }
+    .row { display: flex; gap: 1rem; }
+    .row > div { flex: 1; }
+    .btn { display: inline-block; background: #4636f5; color: #fff; border: none; padding: .6rem 1.2rem; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer; margin-top: 1rem; }
+    .btn.link { background: #fff; color: #4636f5; border: 1px solid #4636f5; }
+    .btn.danger { background: #fff; color: #d63031; border: 1px solid #d63031; padding: .3rem .7rem; margin: 0; font-size: .85rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+    th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #eee; font-size: .9rem; }
+    .pill { display: inline-block; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+    .banner { padding: .6rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: .9rem; }
+    .connected { background: #e6f7ed; color: #1c7a44; }
+    .disconnected { background: #fff6e0; color: #946200; }
+    .err { background: #fff0f0; color: #d63031; padding: .6rem 1rem; border-radius: 8px; }
+    .ok { background: #e6f7ed; color: #1c7a44; padding: .6rem 1rem; border-radius: 8px; }
+    .muted { color: #777; }
+    code { background: #f4f4f8; padding: .1rem .35rem; border-radius: 4px; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">← Dashboard</a></p>
+  <h1>Data Sources</h1>
+
+  {{if .MeshReachable}}
+    {{if .Mesh.SyncActive}}
+      <p class="banner connected">● Connected to the peat mesh — node <code>{{.Mesh.NodeID}}</code>, {{.Mesh.ConnectedPeers}} peer(s). Records sync automatically.</p>
+    {{else}}
+      <p class="banner disconnected">● Operating disconnected — peat node <code>{{.Mesh.NodeID}}</code> is up but not syncing ({{.Mesh.ConnectedPeers}} peers). Records are stored locally and will reconcile when the mesh reconnects.</p>
+    {{end}}
+  {{else}}
+    <p class="banner disconnected">● peat node unreachable — changes can't be saved until it's available.</p>
+  {{end}}
+
+  {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+  {{if .Created}}<p class="ok">Data source added.</p>{{end}}
+
+  <div class="card">
+    <h2>Add a data source</h2>
+    <form method="POST" action="/datasources">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" placeholder="Production telemetry DB" required>
+
+      <div class="row">
+        <div>
+          <label for="type">Type</label>
+          <select id="type" name="type">
+            {{range .KnownTypes}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </div>
+        <div>
+          <label for="secret_ref">Secret reference <span class="muted">(optional)</span></label>
+          <input type="text" id="secret_ref" name="secret_ref" placeholder="k8s-secret/telemetry-db">
+        </div>
+      </div>
+
+      <label for="endpoint">Endpoint</label>
+      <input type="text" id="endpoint" name="endpoint" placeholder="postgres://host:5432/telemetry" required>
+
+      <label style="font-weight:400;"><input type="checkbox" name="enabled" checked> Enabled</label>
+
+      <button class="btn" type="submit">Add data source</button>
+    </form>
+    <p class="muted" style="margin-top:1rem;">Credentials are never stored here — use <code>secret_ref</code> to point at where they live.</p>
+  </div>
+
+  <div class="card">
+    <h2>Configured sources</h2>
+    {{if .Sources}}
+    <table>
+      <thead><tr><th>Name</th><th>Type</th><th>Endpoint</th><th>Enabled</th><th></th></tr></thead>
+      <tbody>
+        {{range .Sources}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td><code>{{.Type}}</code></td>
+          <td>{{.Endpoint}}</td>
+          <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+          <td>
+            <form method="POST" action="/datasources/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Name}}?');">
+              <button class="btn danger" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+      <p class="muted">No data sources yet. Add one above.</p>
+    {{end}}
+  </div>
+</body>
+</html>{{end}}

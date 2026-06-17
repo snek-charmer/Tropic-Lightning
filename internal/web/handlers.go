@@ -5,12 +5,15 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
+	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 )
 
 //go:embed templates/*.html
@@ -24,18 +27,19 @@ const (
 
 // Server holds the dependencies shared by the HTTP handlers.
 type Server struct {
-	auth      *auth.Authenticator
-	cfg       *config.Config
-	templates *template.Template
+	auth        *auth.Authenticator
+	cfg         *config.Config
+	templates   *template.Template
+	dataSources *datasource.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-func NewServer(authn *auth.Authenticator, cfg *config.Config) (*Server, error) {
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -57,6 +61,19 @@ func (s *Server) Routes() http.Handler {
 	// Example role-guarded endpoint: requires the "admin" realm role.
 	adminOnly := s.auth.RequireRealmRole("admin")
 	mux.Handle("GET /api/admin", s.auth.Authenticate(adminOnly(http.HandlerFunc(s.handleAdmin))))
+
+	// Data sources: admin-only. admin wraps a handler with Authenticate + the
+	// admin realm-role guard.
+	admin := func(h http.HandlerFunc) http.Handler {
+		return s.auth.Authenticate(adminOnly(h))
+	}
+	mux.Handle("GET /datasources", admin(s.handleDataSourcesPage))
+	mux.Handle("POST /datasources", admin(s.handleDataSourceCreateForm))
+	mux.Handle("POST /datasources/{id}/delete", admin(s.handleDataSourceDeleteForm))
+
+	mux.Handle("GET /api/datasources", admin(s.handleDataSourcesList))
+	mux.Handle("POST /api/datasources", admin(s.handleDataSourceCreate))
+	mux.Handle("DELETE /api/datasources/{id}", admin(s.handleDataSourceDelete))
 
 	return logging(mux)
 }
@@ -196,6 +213,105 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		"message": "welcome, admin",
 		"user":    firstNonEmpty(claims.PreferredUsername, claims.Subject),
 	})
+}
+
+// --- data sources (admin only) ---
+
+// handleDataSourcesPage renders the admin page: a form to add a data source and
+// a table of existing ones with their sync status.
+func (s *Server) handleDataSourcesPage(w http.ResponseWriter, r *http.Request) {
+	sources, err := s.dataSources.List(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list data sources: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Best-effort mesh status banner; never block the page on it.
+	status, statusErr := s.dataSources.Status(r.Context())
+	s.render(w, "datasources.html", map[string]any{
+		"Sources":       sources,
+		"KnownTypes":    datasource.KnownTypes,
+		"Error":         r.URL.Query().Get("error"),
+		"Created":       r.URL.Query().Get("ok") == "created",
+		"Mesh":          status,
+		"MeshReachable": statusErr == nil,
+	})
+}
+
+// handleDataSourceCreateForm handles the HTML form submission.
+func (s *Server) handleDataSourceCreateForm(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/datasources?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	in := datasource.Input{
+		Name:      r.PostFormValue("name"),
+		Type:      r.PostFormValue("type"),
+		Endpoint:  r.PostFormValue("endpoint"),
+		SecretRef: r.PostFormValue("secret_ref"),
+		Enabled:   r.PostFormValue("enabled") == "on",
+	}
+	if _, err := s.dataSources.Create(r.Context(), in); err != nil {
+		http.Redirect(w, r, "/datasources?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/datasources?ok=created", http.StatusSeeOther)
+}
+
+// handleDataSourceDeleteForm handles the per-row delete button.
+func (s *Server) handleDataSourceDeleteForm(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.dataSources.Delete(r.Context(), id); err != nil && !errors.Is(err, datasource.ErrNotFound) {
+		http.Redirect(w, r, "/datasources?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/datasources", http.StatusSeeOther)
+}
+
+// handleDataSourcesList is the JSON API listing.
+func (s *Server) handleDataSourcesList(w http.ResponseWriter, r *http.Request) {
+	sources, err := s.dataSources.List(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if sources == nil {
+		sources = []datasource.DataSource{}
+	}
+	writeJSON(w, http.StatusOK, sources)
+}
+
+// handleDataSourceCreate is the JSON API create endpoint.
+func (s *Server) handleDataSourceCreate(w http.ResponseWriter, r *http.Request) {
+	var in datasource.Input
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	ds, err := s.dataSources.Create(r.Context(), in)
+	if err != nil {
+		var ve datasource.ValidationError
+		if errors.As(err, &ve) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": ve.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, ds)
+}
+
+// handleDataSourceDelete is the JSON API delete endpoint.
+func (s *Server) handleDataSourceDelete(w http.ResponseWriter, r *http.Request) {
+	err := s.dataSources.Delete(r.Context(), r.PathValue("id"))
+	if errors.Is(err, datasource.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- helpers ---

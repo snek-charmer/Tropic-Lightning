@@ -31,6 +31,11 @@ vendor/
 *.swo
 *~
 
+# --- Zarf build artifacts ---
+zarf-package-*.tar.zst
+*.tar.zst
+zarf-sbom/
+
 # --- OS noise ---
 .DS_Store
 Thumbs.db
