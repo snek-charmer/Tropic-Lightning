@@ -105,6 +105,25 @@ docker build -t keycloak-portal:local .
 docker run --rm -p 3000:3000 --env-file .env keycloak-portal:local
 ```
 
+## Deploy to Kubernetes (Istio)
+
+A Helm chart lives in [`deploy/helm/keycloak-portal`](deploy/helm/keycloak-portal).
+It targets an Istio mesh: it routes through an existing Istio `Gateway` via a
+`VirtualService` and requests an Istio sidecar on the pod. The OIDC client secret
+can be chart-managed or sourced from an existing `Secret`.
+
+```bash
+docker build -t keycloak-portal:local .
+kind load docker-image keycloak-portal:local      # or minikube/k3d equivalent
+
+helm upgrade --install portal deploy/helm/keycloak-portal \
+  -n portal --create-namespace \
+  -f deploy/helm/keycloak-portal/values-local.yaml
+```
+
+See the [chart README](deploy/helm/keycloak-portal/README.md) for values,
+image-loading per cluster type, and the issuer-consistency rule.
+
 ## Keycloak setup (manual / existing Keycloak)
 
 1. Create (or pick) a **realm**.

@@ -1,0 +1,34 @@
+# Example overrides for a local Istio cluster.
+# Usage:
+#   helm upgrade --install portal deploy/helm/keycloak-portal \
+#     -n portal --create-namespace -f deploy/helm/keycloak-portal/values-local.yaml
+
+image:
+  repository: keycloak-portal
+  tag: local
+  # Image is side-loaded into the local cluster (kind/minikube/k3d), not pulled.
+  pullPolicy: IfNotPresent
+
+config:
+  # Adjust to your in-cluster Keycloak's public issuer (browser + pod must agree).
+  issuer: "https://keycloak.example.com/realms/portal"
+  clientId: "keycloak-portal"
+  redirectUrl: "https://portal.example.com/auth/callback"
+  postLogoutRedirectUrl: "https://portal.example.com/"
+  cookieSecure: true
+
+clientSecret:
+  # For local dev, let the chart create the Secret from this value.
+  value: "local-dev-secret"
+  # Or reference an existing Secret instead:
+  # existingSecret:
+  #   name: keycloak-portal-oidc
+  #   key: OIDC_CLIENT_SECRET
+
+istio:
+  sidecarInject: true
+  virtualService:
+    enabled: true
+    gateway: "istio-system/main"
+    hosts:
+      - "portal.example.com"

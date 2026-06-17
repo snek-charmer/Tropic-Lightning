@@ -1,0 +1,79 @@
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "keycloak-portal.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Create a default fully qualified app name.
+*/}}
+{{- define "keycloak-portal.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default .Chart.Name .Values.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "keycloak-portal.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Common labels
+*/}}
+{{- define "keycloak-portal.labels" -}}
+helm.sh/chart: {{ include "keycloak-portal.chart" . }}
+{{ include "keycloak-portal.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Selector labels
+*/}}
+{{- define "keycloak-portal.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "keycloak-portal.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+Service account name
+*/}}
+{{- define "keycloak-portal.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "keycloak-portal.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Name of the Secret holding the OIDC client secret (existing or chart-created).
+*/}}
+{{- define "keycloak-portal.secretName" -}}
+{{- if .Values.clientSecret.existingSecret.name }}
+{{- .Values.clientSecret.existingSecret.name }}
+{{- else }}
+{{- include "keycloak-portal.fullname" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+Key within the Secret that holds the OIDC client secret.
+*/}}
+{{- define "keycloak-portal.secretKey" -}}
+{{- if .Values.clientSecret.existingSecret.name }}
+{{- default "OIDC_CLIENT_SECRET" .Values.clientSecret.existingSecret.key }}
+{{- else }}
+{{- "OIDC_CLIENT_SECRET" }}
+{{- end }}
+{{- end }}

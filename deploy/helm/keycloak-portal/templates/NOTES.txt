@@ -1,0 +1,32 @@
+{{ .Chart.Name }} ({{ include "keycloak-portal.fullname" . }}) has been deployed.
+
+1. Access the portal:
+{{- if .Values.istio.virtualService.enabled }}
+   Through the Istio gateway "{{ .Values.istio.virtualService.gateway }}" at:
+   {{- range .Values.istio.virtualService.hosts }}
+     https://{{ . }}/
+   {{- end }}
+{{- else }}
+   No VirtualService was rendered. Port-forward the Service:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "keycloak-portal.fullname" . }} 3000:{{ .Values.service.port }}
+   Then open http://localhost:3000
+{{- end }}
+
+2. Keycloak client checklist (must match these chart values):
+   - Issuer:                {{ .Values.config.issuer }}
+   - Client ID:             {{ .Values.config.clientId }}
+   - Valid redirect URI:    {{ .Values.config.redirectUrl }}
+   - Post-logout redirect:  {{ .Values.config.postLogoutRedirectUrl }}
+
+   The issuer URL must be reachable (and identical) from BOTH the browser and
+   the portal pod, or token validation will fail.
+
+3. Client secret:
+{{- if .Values.clientSecret.existingSecret.name }}
+   Using existing Secret "{{ .Values.clientSecret.existingSecret.name }}" (key "{{ include "keycloak-portal.secretKey" . }}").
+{{- else }}
+   A Secret "{{ include "keycloak-portal.fullname" . }}" was created from clientSecret.value.
+{{- end }}
+
+4. Verify the rollout:
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "keycloak-portal.fullname" . }}

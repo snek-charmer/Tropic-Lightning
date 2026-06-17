@@ -1,0 +1,117 @@
+# Default values for keycloak-portal.
+
+replicaCount: 1
+
+image:
+  repository: keycloak-portal
+  tag: local
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # If empty and create is true, a name is generated from the release.
+  name: ""
+  annotations: {}
+
+# Extra annotations/labels merged onto the pod template.
+podAnnotations: {}
+podLabels: {}
+
+# -- Application configuration (rendered into a ConfigMap, exposed as env vars).
+config:
+  # Keycloak realm issuer URL. Use the in-cluster Service DNS for the discovery
+  # call AND a URL the browser can reach — they must be the SAME value, or token
+  # validation fails (the issuer claim must match). With Istio that is usually
+  # the public gateway host for Keycloak, e.g.
+  #   https://keycloak.example.com/realms/portal
+  issuer: "https://keycloak.example.com/realms/portal"
+  clientId: "keycloak-portal"
+  # Must match a Valid Redirect URI on the Keycloak client (the portal's host).
+  redirectUrl: "https://portal.example.com/auth/callback"
+  postLogoutRedirectUrl: "https://portal.example.com/"
+  scopes: "openid profile email roles"
+  # Set true when served over HTTPS (recommended through an Istio gateway).
+  cookieSecure: true
+  # Container listen address. Keep in sync with service.targetPort below.
+  listenAddr: ":3000"
+
+# -- OIDC client secret handling.
+clientSecret:
+  # Used to create a Secret when existingSecret.name is empty.
+  value: ""
+  existingSecret:
+    # If set, the chart references this Secret instead of creating one.
+    name: ""
+    key: "OIDC_CLIENT_SECRET"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+istio:
+  # Request the Istio sidecar on the pod (relies on mesh-wide mTLS; no extra
+  # PeerAuthentication is rendered).
+  sidecarInject: true
+  virtualService:
+    enabled: true
+    # Existing Gateway to bind to, "<namespace>/<name>".
+    gateway: "istio-system/main"
+    hosts:
+      - "portal.example.com"
+    # Optional per-route settings.
+    timeout: ""        # e.g. "15s"
+    # Match on these path prefixes; empty means match all.
+    matchPrefixes: []  # e.g. ["/"]
+
+# The app's "/" route returns 200 without auth — used for probes.
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 15
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+# Distroless image already runs as nonroot (uid 65532); enforce it explicitly.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

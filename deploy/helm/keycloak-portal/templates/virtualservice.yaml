@@ -1,0 +1,29 @@
+{{- if .Values.istio.virtualService.enabled }}
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{ include "keycloak-portal.fullname" . }}
+  labels:
+    {{- include "keycloak-portal.labels" . | nindent 4 }}
+spec:
+  hosts:
+    {{- toYaml .Values.istio.virtualService.hosts | nindent 4 }}
+  gateways:
+    - {{ .Values.istio.virtualService.gateway | quote }}
+  http:
+    - {{- with .Values.istio.virtualService.matchPrefixes }}
+      match:
+        {{- range . }}
+        - uri:
+            prefix: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      route:
+        - destination:
+            host: {{ include "keycloak-portal.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+            port:
+              number: {{ .Values.service.port }}
+      {{- with .Values.istio.virtualService.timeout }}
+      timeout: {{ . | quote }}
+      {{- end }}
+{{- end }}
