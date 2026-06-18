@@ -39,6 +39,7 @@ const (
 	nonceCookie    = "oidc_nonce"
 	idTokenCookie  = "id_token"  // kept only as a logout hint
 	returnToCookie = "return_to" // page to return to after login
+	viewAsCookie   = "view_as"   // admin "viewing as" persona (username)
 )
 
 // Server holds the dependencies shared by the HTTP handlers.
@@ -316,21 +317,43 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// polls /api/peat/status to keep it live).
 	peat, connected := s.peatStatus(r.Context())
 
-	// Persona view: admins can preview the operator view, and may preview a
-	// *specific* operator's assignments via ?view=operator&as=<username>.
+	// Persona view: admins can preview a specific operator's view. The choice is
+	// remembered in a cookie so it persists across pages (catalog, datasets) —
+	// see previewUser. ?view=admin clears it; ?view=operator&as=<user> sets it.
 	isAdmin := s.auth.IsAdmin(claims)
+	self := s.operatorName(claims)
 	view := "operator"
-	previewAs := s.operatorName(claims) // default: the current user
+	previewAs := self
 	var opList []operators.Operator
 	if isAdmin {
-		view = "admin"
-		if r.URL.Query().Get("view") == "operator" {
+		opList, _ = s.operators.ListOperators(r.Context())
+		q := r.URL.Query()
+		switch {
+		case q.Get("view") == "operator":
 			view = "operator"
-			if as := r.URL.Query().Get("as"); as != "" {
+			as := q.Get("as")
+			if as == "" {
+				if c, err := r.Cookie(viewAsCookie); err == nil {
+					as = c.Value
+				}
+			}
+			if as != "" && as != self {
 				previewAs = as
+				s.setCookie(w, viewAsCookie, as, 8*time.Hour)
+			} else {
+				previewAs = self // preview own operator view (no persona)
+			}
+		case q.Get("view") == "admin":
+			view = "admin"
+			s.clearCookie(w, viewAsCookie)
+		default:
+			// No explicit choice: honor an active persona cookie if present.
+			if c, err := r.Cookie(viewAsCookie); err == nil && c.Value != "" && c.Value != self {
+				view, previewAs = "operator", c.Value
+			} else {
+				view = "admin"
 			}
 		}
-		opList, _ = s.operators.ListOperators(r.Context())
 	}
 
 	// Datasets assigned to the previewed user (the operator view's "Your datasets").
@@ -1252,6 +1275,20 @@ func (s *Server) operatorName(claims *auth.Claims) string {
 	return firstNonEmpty(claims.PreferredUsername, claims.Subject)
 }
 
+// previewUser returns the identity to render "as": the admin's active "viewing
+// as" persona (from the view_as cookie) when set, otherwise the caller's own
+// username. persona is true when previewing someone else.
+func (s *Server) previewUser(r *http.Request) (user string, persona bool) {
+	claims, _ := auth.ClaimsFromContext(r.Context())
+	self := s.operatorName(claims)
+	if claims != nil && s.auth.IsAdmin(claims) {
+		if c, err := r.Cookie(viewAsCookie); err == nil && c.Value != "" && c.Value != self {
+			return c.Value, true
+		}
+	}
+	return self, false
+}
+
 // canAccessDataset is true for admins, or operators the dataset is assigned to.
 func (s *Server) canAccessDataset(r *http.Request, key string) bool {
 	claims, _ := auth.ClaimsFromContext(r.Context())
@@ -1347,7 +1384,9 @@ func (s *Server) handleOperatorDelete(w http.ResponseWriter, r *http.Request) {
 // control. Subscribing is what grants the user access to view the data.
 func (s *Server) handleCatalogPage(w http.ResponseWriter, r *http.Request) {
 	s.reconcileDatasets(r.Context()) // ensure pilots + uploaded/live datasets are listed
-	me := s.operatorName(claimsOf(r))
+	// Reflect the admin's "viewing as" persona when one is active, so previewing
+	// the catalog shows the assumed user's subscriptions (read-only).
+	me, preview := s.previewUser(r)
 	sets, err := s.operators.ListDatasets(r.Context())
 	if err != nil {
 		http.Error(w, "failed to list data sources: "+err.Error(), http.StatusInternalServerError)
@@ -1378,6 +1417,7 @@ func (s *Server) handleCatalogPage(w http.ResponseWriter, r *http.Request) {
 		"Items":      items,
 		"MineCount":  subscribed,
 		"TotalCount": len(items),
+		"Preview":    preview, // previewing another user: show their subs, hide actions
 		"Error":      r.URL.Query().Get("error"),
 	})
 }
@@ -1689,6 +1729,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name, title, nav
 	if _, ok := data["IsAdmin"]; !ok {
 		claims, _ := auth.ClaimsFromContext(r.Context())
 		data["IsAdmin"] = s.auth.IsAdmin(claims)
+	}
+	// Global "viewing as" banner so the persona is visible (and exitable) on
+	// every page, not just the dashboard.
+	if persona, active := s.previewUser(r); active {
+		data["Persona"] = persona
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.templates.ExecuteTemplate(w, "base.html", data); err != nil {
