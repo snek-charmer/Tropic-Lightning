@@ -9,7 +9,7 @@
 
 image:
   repository: keycloak-portal
-  tag: "0.1.1"
+  tag: "0.1.2"
 
 uds:
   enabled: true
@@ -28,6 +28,9 @@ uds:
     realm: "uds"
     keycloakHost: "sso"
     # issuer: "https://sso.uds.dev/realms/uds"
+    # Back-channel (token + JWKS) goes to Keycloak in-cluster so the pod doesn't
+    # hair-pin to the public SSO host. Verify the service: kubectl -n keycloak get svc
+    keycloakInternalUrl: "http://keycloak-http.keycloak.svc.cluster.local:8080"
     # Restrict to a Keycloak group (optional):
     # groups: ["/UDS Core/Admin"]
   peat:

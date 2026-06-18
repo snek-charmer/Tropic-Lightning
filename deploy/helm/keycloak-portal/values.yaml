@@ -41,6 +41,11 @@ config:
   # Keycloak group whose members get admin (in addition to the "admin" realm
   # role). Matches the token's "groups" claim (full path).
   adminGroup: "/UDS Core/Admin"
+  # In-cluster Keycloak base URL (scheme://host:port, no realm path) for
+  # server-side back-channel calls (token exchange + JWKS), so the pod doesn't
+  # hair-pin to the public SSO host through the mesh. Empty = use the issuer for
+  # everything. Under UDS this defaults to uds.sso.keycloakInternalUrl.
+  keycloakInternalUrl: ""
   # peat node gRPC endpoint backing data-source storage. peat owns persistence,
   # disconnected operation, and CRDT mesh sync. Default targets a sidecar/node
   # in the peat-system namespace.
@@ -99,6 +104,10 @@ uds:
     # https://<keycloakHost>.<expose.domain>/realms/<realm>. This keeps the app
     # from failing on a missing/empty KEYCLOAK_ISSUER under UDS.
     issuer: ""
+    # In-cluster Keycloak base URL for back-channel calls (token + JWKS). Avoids
+    # hair-pinning to the public SSO host through the gateway/mesh. Verify the
+    # service name in your cluster: `kubectl -n keycloak get svc`.
+    keycloakInternalUrl: "http://keycloak-http.keycloak.svc.cluster.local:8080"
   peat:
     # Egress NetworkPolicy target for the peat node (data-source backend).
     namespace: peat-system
