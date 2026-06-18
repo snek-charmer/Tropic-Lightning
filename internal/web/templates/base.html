@@ -36,6 +36,9 @@
     .mesh { display:inline-flex; align-items:center; gap:.4rem; font-size:.8rem; color:var(--muted); font-weight:600; }
     .user { font-size:.85rem; color:var(--text); font-weight:600; }
     @media (max-width:720px){ .nav-links{ display:none; } .user{ display:none; } }
+    .persona-bar { background:var(--amber-weak); color:var(--amber); border-bottom:1px solid #f0dca6; font-size:.85rem; font-weight:600;
+      display:flex; gap:1rem; align-items:center; justify-content:center; padding:.5rem 1rem; }
+    .persona-bar a { color:var(--amber); text-decoration:underline; }
 
     /* ---- layout ---- */
     .container { max-width:1080px; margin:0 auto; padding:1.75rem 1.25rem 4rem; }
@@ -125,6 +128,12 @@
       {{end}}
     </div>
   </header>
+  {{if .Persona}}
+  <div class="persona-bar">
+    <span>Viewing as <strong>{{.Persona}}</strong> — read-only preview of what this operator sees.</span>
+    <a href="/dashboard?view=admin">Exit preview</a>
+  </div>
+  {{end}}
   <main class="container">
     {{ partial .Content . }}
   </main>

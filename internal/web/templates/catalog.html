@@ -2,10 +2,14 @@
 <div class="page-head toolbar">
   <div>
     <h1>Data sources</h1>
+    {{if .Preview}}
+    <p class="muted" style="margin:.2rem 0 0;">Previewing this operator's view — subscribed to {{.MineCount}} of {{.TotalCount}}.</p>
+    {{else}}
     <p class="muted" style="margin:.2rem 0 0;">Subscribe to the data sources you work with — they'll appear on your dashboard and you'll be able to open them. You're subscribed to {{.MineCount}} of {{.TotalCount}}.</p>
+    {{end}}
   </div>
   <span class="spacer"></span>
-  <a class="btn ghost sm" href="/combine/new">+ Combine sources</a>
+  {{if not .Preview}}<a class="btn ghost sm" href="/combine/new">+ Combine sources</a>{{end}}
 </div>
 
 {{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
@@ -23,13 +27,17 @@
           <td class="muted">{{.Subscribers}}</td>
           <td style="text-align:right;">
             <div style="display:inline-flex; gap:.4rem; align-items:center;">
-              {{if .Subscribed}}
-                <a class="btn sm ghost" href="{{.OpenPath}}">Open</a>
-                <form method="POST" action="/catalog/{{.Key}}/unsubscribe" style="display:inline;"><button class="btn sm subtle" type="submit">Unsubscribe</button></form>
+              {{if $.Preview}}
+                {{if .Subscribed}}<span class="pill green">subscribed</span>{{else}}<span class="muted" style="font-size:.8rem;">not subscribed</span>{{end}}
               {{else}}
-                <form method="POST" action="/catalog/{{.Key}}/subscribe" style="display:inline;"><button class="btn sm" type="submit">Subscribe</button></form>
+                {{if .Subscribed}}
+                  <a class="btn sm ghost" href="{{.OpenPath}}">Open</a>
+                  <form method="POST" action="/catalog/{{.Key}}/unsubscribe" style="display:inline;"><button class="btn sm subtle" type="submit">Unsubscribe</button></form>
+                {{else}}
+                  <form method="POST" action="/catalog/{{.Key}}/subscribe" style="display:inline;"><button class="btn sm" type="submit">Subscribe</button></form>
+                {{end}}
+                {{if eq .Kind "combined"}}<form method="POST" action="/combine/{{.Key}}/delete" onsubmit="return confirm('Delete combined source {{.Name}}?');" style="display:inline;"><button class="btn sm danger" type="submit">Delete</button></form>{{end}}
               {{end}}
-              {{if eq .Kind "combined"}}<form method="POST" action="/combine/{{.Key}}/delete" onsubmit="return confirm('Delete combined source {{.Name}}?');" style="display:inline;"><button class="btn sm danger" type="submit">Delete</button></form>{{end}}
             </div>
           </td>
         </tr>

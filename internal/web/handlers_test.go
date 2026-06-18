@@ -1540,3 +1540,77 @@ func TestCombineSourcesFlow(t *testing.T) {
 		t.Error("combined source should be listed in the catalog")
 	}
 }
+
+// TestViewAsPersonaInCatalog verifies an admin's "viewing as" persona carries
+// into the catalog: it shows the assumed operator's subscriptions (read-only),
+// not the admin's own.
+func TestViewAsPersonaInCatalog(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_roster", "Roster", []string{"name"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
+	_, _ = ops.CreateOperator(ctx, "s4", "Op Four")
+	// s4 is subscribed; the admin (alice) is NOT.
+	_ = ops.Subscribe(ctx, "ds_roster", "s4")
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	admin := kc.SignToken(t, map[string]any{"preferred_username": "alice", "groups": []string{"/UDS Core/Admin"}})
+
+	// Pick up the persona by visiting the dashboard as that operator.
+	dreq := httptest.NewRequest(http.MethodGet, "/dashboard?view=operator&as=s4", nil)
+	dreq.Header.Set("Authorization", "Bearer "+admin)
+	drec := httptest.NewRecorder()
+	h.ServeHTTP(drec, dreq)
+	var cookie *http.Cookie
+	for _, c := range drec.Result().Cookies() {
+		if c.Name == "view_as" {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value != "s4" {
+		t.Fatalf("dashboard should set view_as=s4 cookie, got %v", cookie)
+	}
+
+	// The catalog, carrying that cookie, reflects s4's subscriptions + a banner.
+	creq := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	creq.Header.Set("Authorization", "Bearer "+admin)
+	creq.AddCookie(cookie)
+	crec := httptest.NewRecorder()
+	h.ServeHTTP(crec, creq)
+	body := crec.Body.String()
+	if !strings.Contains(body, "Viewing as") || !strings.Contains(body, "s4") {
+		t.Error("catalog should show the 'Viewing as s4' persona banner")
+	}
+	if !strings.Contains(body, "subscribed to 1 of") {
+		t.Errorf("catalog should reflect s4's subscriptions (1), not the admin's (0)")
+	}
+	if strings.Contains(body, "/catalog/ds_roster/subscribe") {
+		t.Error("preview should be read-only (no subscribe buttons)")
+	}
+
+	// Exiting (view=admin) clears the persona cookie.
+	xreq := httptest.NewRequest(http.MethodGet, "/dashboard?view=admin", nil)
+	xreq.Header.Set("Authorization", "Bearer "+admin)
+	xreq.AddCookie(cookie)
+	xrec := httptest.NewRecorder()
+	h.ServeHTTP(xrec, xreq)
+	cleared := false
+	for _, c := range xrec.Result().Cookies() {
+		if c.Name == "view_as" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("view=admin should clear the persona cookie")
+	}
+}
