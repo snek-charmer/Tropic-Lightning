@@ -6,12 +6,13 @@ metadata:
     {{- include "keycloak-portal.labels" . | nindent 4 }}
 data:
   LISTEN_ADDR: {{ .Values.config.listenAddr | quote }}
-  KEYCLOAK_ISSUER: {{ .Values.config.issuer | quote }}
   OIDC_CLIENT_ID: {{ .Values.config.clientId | quote }}
   {{- if .Values.uds.enabled }}
+  KEYCLOAK_ISSUER: {{ include "keycloak-portal.udsIssuer" . | quote }}
   OIDC_REDIRECT_URL: {{ printf "https://%s/auth/callback" (include "keycloak-portal.udsFullHost" .) | quote }}
   OIDC_POST_LOGOUT_REDIRECT_URL: {{ printf "https://%s/" (include "keycloak-portal.udsFullHost" .) | quote }}
   {{- else }}
+  KEYCLOAK_ISSUER: {{ .Values.config.issuer | quote }}
   OIDC_REDIRECT_URL: {{ .Values.config.redirectUrl | quote }}
   OIDC_POST_LOGOUT_REDIRECT_URL: {{ .Values.config.postLogoutRedirectUrl | quote }}
   {{- end }}

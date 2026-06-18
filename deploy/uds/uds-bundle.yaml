@@ -37,8 +37,12 @@ packages:
               description: "UDS gateway: tenant | admin | passthrough"
               default: tenant
             - name: ISSUER
-              path: config.issuer
-              description: "Keycloak realm issuer URL"
+              path: uds.sso.issuer
+              description: "OIDC issuer override. Leave unset to derive https://sso.<DOMAIN>/realms/<REALM>"
+            - name: REALM
+              path: uds.sso.realm
+              description: "Keycloak realm (UDS Core default: uds)"
+              default: uds
             - name: CLIENT_ID
               path: config.clientId
               description: "OIDC client ID (UDS creates this Keycloak client)"

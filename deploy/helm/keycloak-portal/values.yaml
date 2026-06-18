@@ -88,6 +88,14 @@ uds:
     secretName: keycloak-portal-sso
     # Optional Keycloak group restriction (anyOf). Empty = no restriction.
     groups: []
+    # Keycloak realm the client lives in (UDS Core's default realm is "uds").
+    realm: "uds"
+    # Keycloak subdomain; the OIDC issuer host is <keycloakHost>.<expose.domain>.
+    keycloakHost: "sso"
+    # Explicit issuer override. Empty => derive
+    # https://<keycloakHost>.<expose.domain>/realms/<realm>. This keeps the app
+    # from failing on a missing/empty KEYCLOAK_ISSUER under UDS.
+    issuer: ""
   peat:
     # Egress NetworkPolicy target for the peat node (data-source backend).
     namespace: peat-system

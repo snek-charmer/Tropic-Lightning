@@ -22,6 +22,12 @@ uds:
   sso:
     clientName: "Keycloak Portal"
     secretName: keycloak-portal-sso
+    # OIDC issuer is derived as https://<keycloakHost>.<expose.domain>/realms/<realm>
+    # (=> https://sso.uds.dev/realms/uds). Override realm/keycloakHost if different,
+    # or set `issuer` to a full URL to override entirely.
+    realm: "uds"
+    keycloakHost: "sso"
+    # issuer: "https://sso.uds.dev/realms/uds"
     # Restrict to a Keycloak group (optional):
     # groups: ["/UDS Core/Admin"]
   peat:
@@ -29,10 +35,9 @@ uds:
     port: 50051
 
 config:
-  # Keycloak realm issuer (reachable identically by browser and pod).
-  issuer: "https://sso.uds.dev/realms/uds"
+  # Under UDS, KEYCLOAK_ISSUER and the redirect URLs are derived (see uds.sso /
+  # uds.expose above), so config.issuer / redirectUrl here are unused.
   clientId: keycloak-portal
-  # redirectUrl / postLogoutRedirectUrl are derived from uds.expose.host.
   cookieSecure: true
   peatNodeAddr: "peat-node-peat-node.peat-system.svc:50051"
   peatCollection: data_sources

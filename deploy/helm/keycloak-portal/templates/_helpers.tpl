@@ -70,6 +70,20 @@ use this full host, not expose.host alone.
 {{- end }}
 
 {{/*
+OIDC issuer under UDS: explicit uds.sso.issuer if set, else derived from the
+Keycloak subdomain + cluster domain + realm. Deriving avoids a crash when the
+issuer isn't passed at deploy time (the standard UDS issuer is
+https://sso.<domain>/realms/uds).
+*/}}
+{{- define "keycloak-portal.udsIssuer" -}}
+{{- if .Values.uds.sso.issuer -}}
+{{- .Values.uds.sso.issuer -}}
+{{- else -}}
+{{- printf "https://%s.%s/realms/%s" .Values.uds.sso.keycloakHost .Values.uds.expose.domain .Values.uds.sso.realm -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Name of the Secret holding the OIDC client secret. With UDS, the UDS Operator
 generates it (uds.sso.secretName). Otherwise an existing or chart-created Secret.
 */}}

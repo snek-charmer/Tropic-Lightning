@@ -210,13 +210,13 @@ zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \
   --set PORTAL_HOST="portal" \
-  --set DOMAIN="example.com" \
-  --set ISSUER="https://sso.example.com/realms/uds"
+  --set DOMAIN="example.com"
 ```
 
 > `PORTAL_HOST` is the **subdomain only** — UDS appends `DOMAIN`
 > (`portal` + `example.com` => `portal.example.com`). The redirect URI is built
-> from `<PORTAL_HOST>.<DOMAIN>`.
+> from `<PORTAL_HOST>.<DOMAIN>`, and the OIDC issuer defaults to
+> `https://sso.<DOMAIN>/realms/uds` (override with `--set ISSUER=…` / `--set REALM=…`).
 
 See the [UDS bundle README](deploy/uds/README.md) for variables. Zarf init, UDS
 Core, and the peat node are platform prerequisites.
