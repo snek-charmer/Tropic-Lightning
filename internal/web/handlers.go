@@ -88,6 +88,13 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /pilots/import", admin(s.handlePilotsImport))
 	mux.Handle("GET /api/pilots", admin(s.handlePilotsList))
 
+	// Operator (any authenticated user): mission readiness view + edit a pilot's
+	// availability.
+	authed := func(h http.HandlerFunc) http.Handler { return s.auth.Authenticate(h) }
+	mux.Handle("GET /missions", authed(s.handleMissions))
+	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
+	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
+
 	return logging(mux)
 }
 
@@ -208,13 +215,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// polls /api/peat/status to keep it live).
 	peat, connected := s.peatStatus(r.Context())
 
+	// Persona view: admins can preview the operator (s1) view via ?view=operator.
+	isAdmin := s.auth.IsAdmin(claims)
+	view := "operator"
+	if isAdmin {
+		view = "admin"
+		if r.URL.Query().Get("view") == "operator" {
+			view = "operator"
+		}
+	}
+
 	s.render(w, "dashboard.html", map[string]any{
 		"Username":      firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
 		"Email":         claims.Email,
 		"RealmRoles":    claims.AllRealmRoles(),
 		"Groups":        claims.AllGroups(),
 		"ClientRoles":   clientRoles,
-		"IsAdmin":       s.auth.IsAdmin(claims),
+		"IsAdmin":       isAdmin,
+		"View":          view, // "admin" | "operator"
 		"PeatConnected": connected,
 		"Peat":          peat,
 	})
@@ -408,6 +426,67 @@ func (s *Server) handlePilotsList(w http.ResponseWriter, r *http.Request) {
 		all = []pilots.Pilot{}
 	}
 	writeJSON(w, http.StatusOK, all)
+}
+
+// --- mission readiness (operator: any authenticated user) ---
+
+// handleMissions renders the operator view: a readiness status wheel plus an
+// editable pilot list (mark grounded/available).
+func (s *Server) handleMissions(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.pilots.ReadinessSummary(r.Context())
+	if err != nil {
+		http.Error(w, "failed to summarize: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	all, err := s.pilots.List(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list pilots: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	shown := all
+	if len(shown) > pilotsDisplayLimit {
+		shown = shown[:pilotsDisplayLimit]
+	}
+	s.render(w, "missions.html", map[string]any{
+		"Summary":  summary,
+		"AvailPct": summary.AvailablePct(),
+		"Pilots":   shown,
+		"Shown":    len(shown),
+		"Updated":  r.URL.Query().Get("updated"),
+		"Error":    r.URL.Query().Get("error"),
+	})
+}
+
+// handlePilotStatus is the operator edit: set a pilot's mission availability.
+func (s *Server) handlePilotStatus(w http.ResponseWriter, r *http.Request) {
+	claims, _ := auth.ClaimsFromContext(r.Context())
+	by := ""
+	if claims != nil {
+		by = firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject)
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/missions?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	id := r.PathValue("id")
+	status := r.PostFormValue("status")
+	note := r.PostFormValue("note")
+	p, err := s.pilots.SetStatus(r.Context(), id, status, note, by)
+	if err != nil {
+		http.Redirect(w, r, "/missions?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/missions?updated="+url.QueryEscape(p.PilotID), http.StatusSeeOther)
+}
+
+// handleMissionsSummary returns the readiness rollup as JSON (for the wheel).
+func (s *Server) handleMissionsSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.pilots.ReadinessSummary(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
 }
 
 // --- helpers ---

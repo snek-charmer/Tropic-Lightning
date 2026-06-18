@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -535,5 +536,104 @@ func TestPilotsImportAndList(t *testing.T) {
 	}
 	if len(list) < 100 {
 		t.Errorf("listed %d pilots, want many", len(list))
+	}
+}
+
+func TestMissionsAccessibleToNonAdmin(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	// Non-admin user (operator s1) can open the missions view.
+	tok := kc.SignToken(t, map[string]any{
+		"preferred_username": "s1",
+		"realm_access":       map[string]any{"roles": []string{"user"}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/missions", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("operator /missions = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Mission Readiness") {
+		t.Error("missions page should render the readiness view")
+	}
+}
+
+func TestOperatorCanEditPilotStatus(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	// Build a server whose pilots store is pre-seeded so we can edit a known id.
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	pstore := pilots.NewMemoryStore()
+	_ = pstore.Put(context.Background(), pilots.Pilot{PilotID: "P0001", MissionStatus: pilots.StatusAvailable})
+	pl := pilots.NewService(pstore, ds, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+
+	tok := kc.SignToken(t, map[string]any{
+		"preferred_username": "s1",
+		"realm_access":       map[string]any{"roles": []string{"user"}},
+	})
+	form := url.Values{"status": {"grounded"}, "note": {"sick"}}
+	req := httptest.NewRequest(http.MethodPost, "/pilots/P0001/status", strings.NewReader(form.Encode()))
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status edit = %d, want 303", rec.Code)
+	}
+	got, _ := pstore.Get(context.Background(), "P0001")
+	if got.Available() || got.StatusBy != "s1" || got.StatusNote != "sick" {
+		t.Errorf("pilot after edit = %+v", got)
+	}
+}
+
+func TestDashboardAdminViewSelector(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	adminTok := kc.SignToken(t, map[string]any{
+		"preferred_username": "alice",
+		"groups":             []string{"/UDS Core/Admin"},
+	})
+	get := func(q string) string {
+		req := httptest.NewRequest(http.MethodGet, "/dashboard"+q, nil)
+		req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: adminTok})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+	// Admin default view shows the admin card + selector.
+	body := get("")
+	if !strings.Contains(body, "View as") || !strings.Contains(body, "/datasources") {
+		t.Error("admin dashboard should show the view selector and admin card")
+	}
+	// Operator preview shows the missions card, not the admin card.
+	op := get("?view=operator")
+	if !strings.Contains(op, "/missions") {
+		t.Error("operator view should link to /missions")
+	}
+	if strings.Contains(op, "/datasources") {
+		t.Error("operator view should NOT show admin data-source link")
+	}
+
+	// Non-admin never sees the selector.
+	userTok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: userTok})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "View as") {
+		t.Error("non-admin should not see the view selector")
+	}
+	if !strings.Contains(rec.Body.String(), "/missions") {
+		t.Error("non-admin dashboard should show the operator missions card")
 	}
 }

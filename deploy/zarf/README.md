@@ -11,9 +11,9 @@ this package.
 
 ```bash
 # From the repo root: build/tag the image first (create pulls it from your daemon).
-docker build -t keycloak-portal:0.1.3 .
+docker build -t keycloak-portal:0.1.4 .
 zarf package create deploy/zarf --confirm
-# -> zarf-package-keycloak-portal-<arch>-0.1.3.tar.zst
+# -> zarf-package-keycloak-portal-<arch>-0.1.4.tar.zst
 ```
 
 For production, push the image to a registry and pin it by digest in

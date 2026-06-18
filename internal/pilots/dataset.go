@@ -54,7 +54,7 @@ func ParseDataset() ([]Pilot, error) {
 		if id == "" {
 			continue
 		}
-		out = append(out, Pilot{
+		p := Pilot{
 			PilotID:             id,
 			Age:                 atoi(get(row, "age")),
 			Gender:              get(row, "gender"),
@@ -67,9 +67,21 @@ func ParseDataset() ([]Pilot, error) {
 			DentalReadiness:     atoi(get(row, "dental_readiness")),
 			PhaLastDate:         dateOnly(get(row, "pha_last_date")),
 			PhaStatus:           get(row, "pha_status"),
-		})
+		}
+		p.MissionStatus = deriveStatus(p)
+		out = append(out, p)
 	}
 	return out, nil
+}
+
+// deriveStatus computes initial availability from medical-readiness fields: a
+// pilot starts available only if their PHA is complete and dental is ready.
+// Operators can override this on the missions page.
+func deriveStatus(p Pilot) string {
+	if p.PhaStatus == "Complete" && p.DentalReadiness == 1 {
+		return StatusAvailable
+	}
+	return StatusGrounded
 }
 
 // atoi parses an int, tolerating empty/decimal values ("212", "212.0", "").
