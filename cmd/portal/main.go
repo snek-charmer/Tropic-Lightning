@@ -17,6 +17,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
@@ -85,7 +86,21 @@ func run() error {
 	defer datasetStore.Close()
 	datasetService := dataset.NewService(datasetStore, dsService, slog.Default())
 
-	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService)
+	// Operator registry + dataset assignments.
+	operatorStore, err := operators.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer operatorStore.Close()
+	operatorService := operators.NewService(operatorStore)
+	// Make the pilots dataset assignable even before it's (re)imported (best-effort).
+	regCtx, regCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := operatorService.RegisterDataset(regCtx, "pilots", "USAF Pilots", operators.KindPilots, "pilots"); err != nil {
+		slog.Warn("registering pilots dataset", "err", err)
+	}
+	regCancel()
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService)
 	if err != nil {
 		return err
 	}

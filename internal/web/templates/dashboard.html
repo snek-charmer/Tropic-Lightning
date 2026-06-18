@@ -78,17 +78,32 @@
   {{if and .IsAdmin (eq .View "admin")}}
   <div class="card">
     <h2>Admin</h2>
-    <p>Manage external system connections and the pilots dataset.</p>
+    <p>Manage external system connections, the pilots dataset, and operators.</p>
     <a class="btn" href="/datasources">Manage data sources →</a>
     <a class="btn" href="/pilots" style="margin-left:.5rem;">USAF pilots dataset →</a>
+    <a class="btn" href="/operators" style="margin-left:.5rem;">Operators &amp; assignments →</a>
   </div>
   {{end}}
 
   {{if eq .View "operator"}}
   <div class="card">
-    <h2>Mission readiness {{if .IsAdmin}}<span class="muted">(operator preview)</span>{{end}}</h2>
-    <p>View pilot availability and update status — mark a pilot sick/grounded or return them to duty. The status wheel shows how many are available to fly.</p>
-    <a class="btn" href="/missions">Open mission readiness →</a>
+    <h2>Your datasets {{if .IsAdmin}}<span class="muted">(operator preview)</span>{{end}}</h2>
+    {{if .MyDatasets}}
+      <p class="muted">Datasets assigned to you. Open one to view and filter its data.</p>
+      <ul>
+        {{range .MyDatasets}}
+        <li style="margin:.4rem 0;">
+          {{if eq .Kind "pilots"}}
+            <a class="btn" href="/missions">{{.Name}} — mission readiness →</a>
+          {{else}}
+            <a class="btn" href="/datasets/{{.Collection}}">{{.Name}} →</a>
+          {{end}}
+        </li>
+        {{end}}
+      </ul>
+    {{else}}
+      <p class="muted">No datasets are assigned to you yet. An admin assigns datasets under <em>Operators &amp; assignments</em>.</p>
+    {{end}}
   </div>
   {{end}}
 

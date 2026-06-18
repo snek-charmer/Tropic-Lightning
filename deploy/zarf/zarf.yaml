@@ -2,7 +2,7 @@
 kind: ZarfPackageConfig
 metadata:
   name: keycloak-portal
-  version: 0.1.7
+  version: 0.1.8
   description: >-
     Keycloak OIDC portal with peat-backed, edge/disconnected data sources.
     Deploys the portal Helm chart and bundles its container image for
@@ -44,10 +44,10 @@ components:
         namespace: portal
         # Path is relative to this zarf.yaml.
         localPath: ../helm/keycloak-portal
-        version: 0.1.7
+        version: 0.1.8
         valuesFiles:
           - values.yaml
     images:
       # Bundled into the package; the Zarf agent rewrites this to the in-cluster
       # registry at deploy time. Build/tag this image before `zarf package create`.
-      - keycloak-portal:0.1.7
+      - keycloak-portal:0.1.8

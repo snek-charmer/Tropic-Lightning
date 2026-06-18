@@ -9,6 +9,7 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 )
 
@@ -40,10 +42,11 @@ type Server struct {
 	dataSources *datasource.Service
 	pilots      *pilots.Service
 	datasets    *dataset.Service
+	operators   *operators.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service) (*Server, error) {
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service) (*Server, error) {
 	funcs := template.FuncMap{
 		"hasPrefix":  strings.HasPrefix,
 		"trimPrefix": strings.TrimPrefix,
@@ -52,7 +55,7 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets, operators: ops}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -96,16 +99,21 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /datasources/upload", admin(s.handleUploadPage))
 	mux.Handle("POST /datasources/upload", admin(s.handleUploadParse))
 	mux.Handle("POST /datasources/import", admin(s.handleDatasetImport))
-	mux.Handle("GET /datasets/{collection}", admin(s.handleDatasetView))
 
-	// Pilots dataset (admin-only): view + import into peat.
+	// Pilots import/manage (admin-only).
 	mux.Handle("GET /pilots", admin(s.handlePilotsPage))
 	mux.Handle("POST /pilots/import", admin(s.handlePilotsImport))
 	mux.Handle("GET /api/pilots", admin(s.handlePilotsList))
 
-	// Operator (any authenticated user): mission readiness view + edit a pilot's
-	// availability.
+	// Operators & dataset assignments (admin-only).
+	mux.Handle("GET /operators", admin(s.handleOperatorsPage))
+	mux.Handle("POST /operators", admin(s.handleOperatorCreate))
+	mux.Handle("POST /operators/{username}/delete", admin(s.handleOperatorDelete))
+	mux.Handle("POST /datasets/{key}/assign", admin(s.handleDatasetAssign))
+
+	// Dataset access (authenticated; per-dataset assignment enforced in-handler).
 	authed := func(h http.HandlerFunc) http.Handler { return s.auth.Authenticate(h) }
+	mux.Handle("GET /datasets/{collection}", authed(s.handleDatasetView))
 	mux.Handle("GET /missions", authed(s.handleMissions))
 	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
 	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
@@ -261,6 +269,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Datasets assigned to this user (the operator view's "Your datasets").
+	myDatasets, _ := s.operators.DatasetsForOperator(r.Context(), s.operatorName(claims))
+
 	s.render(w, "dashboard.html", map[string]any{
 		"Username":      firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
 		"Email":         claims.Email,
@@ -269,6 +280,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"ClientRoles":   clientRoles,
 		"IsAdmin":       isAdmin,
 		"View":          view, // "admin" | "operator"
+		"MyDatasets":    myDatasets,
 		"PeatConnected": connected,
 		"Peat":          peat,
 	})
@@ -470,6 +482,10 @@ func (s *Server) handleDatasetImport(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/datasources/upload?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	// Register it as an assignable dataset (idempotent; preserves assignments).
+	if err := s.operators.RegisterDataset(r.Context(), res.Collection, name, operators.KindGeneric, res.Collection); err != nil {
+		slog.Warn("register dataset", "err", err)
+	}
 	dest := "/datasets/" + res.Collection + "?imported=" + strconv.Itoa(res.Imported)
 	if res.Capped {
 		dest += "&capped=" + strconv.Itoa(res.Total)
@@ -480,24 +496,151 @@ func (s *Server) handleDatasetImport(w http.ResponseWriter, r *http.Request) {
 // handleDatasetView renders an ingested dataset's rows (kept columns).
 func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) {
+		s.forbidden(w, r)
+		return
+	}
 	name, cols, rows, err := s.datasets.View(r.Context(), collection)
 	if err != nil {
 		http.Error(w, "failed to load dataset: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	shown := rows
+
+	// Generic row filter: a column "contains" match and/or a global search.
+	col := r.URL.Query().Get("col")
+	val := r.URL.Query().Get("val")
+	q := r.URL.Query().Get("q")
+	filtered := rows
+	if col != "" && val != "" || q != "" {
+		filtered = filtered[:0:0]
+		for _, row := range rows {
+			if rowMatches(row, col, val, q) {
+				filtered = append(filtered, row)
+			}
+		}
+	}
+
+	shown := filtered
 	if len(shown) > pilotsDisplayLimit {
 		shown = shown[:pilotsDisplayLimit]
 	}
 	s.render(w, "dataset_view.html", map[string]any{
-		"Name":     name,
-		"Columns":  cols,
-		"Rows":     shown,
-		"Shown":    len(shown),
-		"Total":    len(rows),
-		"Imported": r.URL.Query().Get("imported"),
-		"Capped":   r.URL.Query().Get("capped"),
+		"Collection":   collection,
+		"Name":         name,
+		"Columns":      cols,
+		"Rows":         shown,
+		"Shown":        len(shown),
+		"Total":        len(filtered),
+		"GrandTotal":   len(rows),
+		"FilterCol":    col,
+		"FilterVal":    val,
+		"FilterQuery":  q,
+		"FilterActive": (col != "" && val != "") || q != "",
+		"Imported":     r.URL.Query().Get("imported"),
+		"Capped":       r.URL.Query().Get("capped"),
 	})
+}
+
+// rowMatches applies the generic dataset filter to a row.
+func rowMatches(row map[string]string, col, val, q string) bool {
+	if col != "" && val != "" {
+		if !strings.Contains(strings.ToLower(row[col]), strings.ToLower(val)) {
+			return false
+		}
+	}
+	if q != "" {
+		found := false
+		for _, v := range row {
+			if strings.Contains(strings.ToLower(v), strings.ToLower(q)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// operatorName is the identity used for assignment checks (Keycloak username).
+func (s *Server) operatorName(claims *auth.Claims) string {
+	if claims == nil {
+		return ""
+	}
+	return firstNonEmpty(claims.PreferredUsername, claims.Subject)
+}
+
+// canAccessDataset is true for admins, or operators the dataset is assigned to.
+func (s *Server) canAccessDataset(r *http.Request, key string) bool {
+	claims, _ := auth.ClaimsFromContext(r.Context())
+	if s.auth.IsAdmin(claims) {
+		return true
+	}
+	return s.operators.IsAssigned(r.Context(), key, s.operatorName(claims))
+}
+
+// forbidden renders a 403 (HTML or JSON by Accept).
+func (s *Server) forbidden(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("<p>You don't have access to this dataset. Ask an admin to assign it to you. <a href=\"/dashboard\">Back</a></p>"))
+		return
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "not assigned to this dataset"})
+}
+
+// --- operators & assignments (admin only) ---
+
+func (s *Server) handleOperatorsPage(w http.ResponseWriter, r *http.Request) {
+	ops, err := s.operators.ListOperators(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list operators: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	sets, err := s.operators.ListDatasets(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list datasets: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "operators.html", map[string]any{
+		"Operators": ops,
+		"Datasets":  sets,
+		"Error":     r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handleOperatorCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/operators?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	if _, err := s.operators.CreateOperator(r.Context(), r.PostFormValue("username"), r.PostFormValue("display_name")); err != nil {
+		http.Redirect(w, r, "/operators?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/operators", http.StatusSeeOther)
+}
+
+func (s *Server) handleOperatorDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.operators.DeleteOperator(r.Context(), r.PathValue("username")); err != nil {
+		http.Redirect(w, r, "/operators?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/operators", http.StatusSeeOther)
+}
+
+func (s *Server) handleDatasetAssign(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/operators?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	key := r.PathValue("key")
+	if err := s.operators.SetAssignments(r.Context(), key, r.PostForm["op"]); err != nil {
+		http.Redirect(w, r, "/operators?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/operators", http.StatusSeeOther)
 }
 
 // --- pilots dataset (admin only) ---
@@ -539,6 +682,9 @@ func (s *Server) handlePilotsImport(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/pilots?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return
 	}
+	if err := s.operators.RegisterDataset(ctx, "pilots", "USAF Pilots", operators.KindPilots, "pilots"); err != nil {
+		slog.Warn("register pilots dataset", "err", err)
+	}
 	http.Redirect(w, r, "/pilots?imported="+strconv.Itoa(n), http.StatusSeeOther)
 }
 
@@ -560,6 +706,10 @@ func (s *Server) handlePilotsList(w http.ResponseWriter, r *http.Request) {
 // handleMissions renders the operator view: a readiness status wheel plus an
 // editable pilot list (mark grounded/available).
 func (s *Server) handleMissions(w http.ResponseWriter, r *http.Request) {
+	if !s.canAccessDataset(r, "pilots") {
+		s.forbidden(w, r)
+		return
+	}
 	f := missionFilter(r)
 	res, err := s.pilots.Browse(r.Context(), f)
 	if err != nil {
@@ -622,6 +772,10 @@ func missionFilterQuery(f pilots.Filter) string {
 
 // handlePilotStatus is the operator edit: set a pilot's mission availability.
 func (s *Server) handlePilotStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.canAccessDataset(r, "pilots") {
+		s.forbidden(w, r)
+		return
+	}
 	claims, _ := auth.ClaimsFromContext(r.Context())
 	by := ""
 	if claims != nil {
@@ -647,6 +801,10 @@ func (s *Server) handlePilotStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleMissionsSummary returns the readiness rollup as JSON (for the wheel).
 func (s *Server) handleMissionsSummary(w http.ResponseWriter, r *http.Request) {
+	if !s.canAccessDataset(r, "pilots") {
+		s.forbidden(w, r)
+		return
+	}
 	summary, err := s.pilots.ReadinessSummary(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

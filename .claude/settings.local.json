@@ -75,7 +75,19 @@
       "Bash(gofmt -w internal/dataset/)",
       "Bash(perl -0pi -e 's/\\\\tpl := pilots\\\\.NewService\\\\\\(pstore, ds, nil\\\\\\)\\\\n\\\\tsrv, err := web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pl, dsets\\\\\\)/\\\\tpl := pilots.NewService\\(pstore, ds, nil\\)\\\\n\\\\tsrv, err := web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pl, dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)\\)/' internal/web/handlers_test.go)",
       "Bash(perl -0pi -e 's/web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pilots\\\\.NewService\\\\\\(pstore, ds, nil\\\\\\)\\\\\\)/web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pilots.NewService\\(pstore, ds, nil\\), dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)\\)/' internal/web/handlers_test.go)",
-      "Bash(gofmt -w internal/web/handlers_test.go)"
+      "Bash(gofmt -w internal/web/handlers_test.go)",
+      "Bash(gofmt -w internal/operators/)",
+      "Bash(sed -n '/^func \\(s \\\\*Server\\) handleMissionsSummary/,/^}/p' internal/web/handlers.go)",
+      "Bash(sed -n '/^func \\(s \\\\*Server\\) handleDatasetImport/,/^}/p' internal/web/handlers.go)",
+      "Bash(sed -n '/^func \\(s \\\\*Server\\) handlePilotsImport/,/^}/p' internal/web/handlers.go)",
+      "Bash(sed -i 's#s.logWarn\\(\"register dataset\", err\\)#slog.Warn\\(\"register dataset\", \"err\", err\\)#' internal/web/handlers.go)",
+      "Bash(sed -i 's#\\\\t\"io\"#\\\\t\"io\"\\\\n\\\\t\"log/slog\"#' internal/web/handlers.go)",
+      "Bash(gofmt -w internal/web/handlers.go)",
+      "Bash(sed -i 's#\"github.com/defenseunicorns/keycloak-portal/internal/datasource\"#\"github.com/defenseunicorns/keycloak-portal/internal/datasource\"\\\\n\\\\t\"github.com/defenseunicorns/keycloak-portal/internal/operators\"#' cmd/portal/main.go)",
+      "Bash(sed -i 's#dsets := dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)#dsets := dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)\\\\n\\\\tops := operators.NewService\\(operators.NewMemoryStore\\(\\)\\)#' internal/web/handlers_test.go)",
+      "Bash(sed -i 's#web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pl, dsets\\)#web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pl, dsets, ops\\)#' internal/web/handlers_test.go)",
+      "Bash(perl -0pi -e 's/web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pl, dataset\\\\.NewService\\\\\\(dataset\\\\.NewMemoryStore\\\\\\(\\\\\\), ds, nil\\\\\\)\\\\\\)/web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pl, dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\), operators.NewService\\(operators.NewMemoryStore\\(\\)\\)\\)/g' internal/web/handlers_test.go)",
+      "Bash(perl -0pi -e 's/web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pilots\\\\.NewService\\\\\\(pstore, ds, nil\\\\\\), dataset\\\\.NewService\\\\\\(dataset\\\\.NewMemoryStore\\\\\\(\\\\\\), ds, nil\\\\\\)\\\\\\)/web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pilots.NewService\\(pstore, ds, nil\\), dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\), operators.NewService\\(operators.NewMemoryStore\\(\\)\\)\\)/g' internal/web/handlers_test.go)"
     ]
   }
 }

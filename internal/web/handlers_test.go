@@ -15,6 +15,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
@@ -25,7 +26,8 @@ func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	ds := datasource.NewService(datasource.NewMemoryStore())
 	pl := pilots.NewService(pilots.NewMemoryStore(), ds, nil)
 	dsets := dataset.NewService(dataset.NewMemoryStore(), ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets)
+	ops := operators.NewService(operators.NewMemoryStore())
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets, ops)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -543,46 +545,58 @@ func TestPilotsImportAndList(t *testing.T) {
 	}
 }
 
-func TestMissionsAccessibleToNonAdmin(t *testing.T) {
+// opServer builds a server with explicit pilots + operators services so tests
+// can pre-seed pilots and control assignments.
+func opServer(t *testing.T, kc *authtest.Keycloak, pstore *pilots.MemoryStore, ops *operators.Service) http.Handler {
+	t.Helper()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	pl := pilots.NewService(pstore, ds, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	return srv.Routes()
+}
+
+func TestMissionsRequiresAssignment(t *testing.T) {
 	kc := authtest.NewKeycloak(t)
 	defer kc.Close()
-	h := newServer(t, kc)
+	ctx := context.Background()
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "pilots", "USAF Pilots", operators.KindPilots, "pilots")
+	h := opServer(t, kc, pilots.NewMemoryStore(), ops)
 
-	// Non-admin user (operator s1) can open the missions view.
-	tok := kc.SignToken(t, map[string]any{
-		"preferred_username": "s1",
-		"realm_access":       map[string]any{"roles": []string{"user"}},
-	})
-	req := httptest.NewRequest(http.MethodGet, "/missions", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("operator /missions = %d, want 200", rec.Code)
+	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	do := func() int {
+		req := httptest.NewRequest(http.MethodGet, "/missions", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
 	}
-	if !strings.Contains(rec.Body.String(), "Mission Readiness") {
-		t.Error("missions page should render the readiness view")
+	// Unassigned operator is denied.
+	if code := do(); code != http.StatusForbidden {
+		t.Errorf("unassigned /missions = %d, want 403", code)
+	}
+	// After assignment, allowed.
+	_ = ops.SetAssignments(ctx, "pilots", []string{"s1"})
+	if code := do(); code != http.StatusOK {
+		t.Errorf("assigned /missions = %d, want 200", code)
 	}
 }
 
 func TestOperatorCanEditPilotStatus(t *testing.T) {
 	kc := authtest.NewKeycloak(t)
 	defer kc.Close()
-	// Build a server whose pilots store is pre-seeded so we can edit a known id.
-	ds := datasource.NewService(datasource.NewMemoryStore())
+	ctx := context.Background()
 	pstore := pilots.NewMemoryStore()
-	_ = pstore.Put(context.Background(), pilots.Pilot{PilotID: "P0001", MissionStatus: pilots.StatusAvailable})
-	pl := pilots.NewService(pstore, ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil))
-	if err != nil {
-		t.Fatalf("server: %v", err)
-	}
-	h := srv.Routes()
+	_ = pstore.Put(ctx, pilots.Pilot{PilotID: "P0001", MissionStatus: pilots.StatusAvailable})
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "pilots", "USAF Pilots", operators.KindPilots, "pilots")
+	_ = ops.SetAssignments(ctx, "pilots", []string{"s1"})
+	h := opServer(t, kc, pstore, ops)
 
-	tok := kc.SignToken(t, map[string]any{
-		"preferred_username": "s1",
-		"realm_access":       map[string]any{"roles": []string{"user"}},
-	})
+	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
 	form := url.Values{"status": {"grounded"}, "note": {"sick"}}
 	req := httptest.NewRequest(http.MethodPost, "/pilots/P0001/status", strings.NewReader(form.Encode()))
 	req.Header.Set("Authorization", "Bearer "+tok)
@@ -592,7 +606,7 @@ func TestOperatorCanEditPilotStatus(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status edit = %d, want 303", rec.Code)
 	}
-	got, _ := pstore.Get(context.Background(), "P0001")
+	got, _ := pstore.Get(ctx, "P0001")
 	if got.Available() || got.StatusBy != "s1" || got.StatusNote != "sick" {
 		t.Errorf("pilot after edit = %+v", got)
 	}
@@ -619,16 +633,16 @@ func TestDashboardAdminViewSelector(t *testing.T) {
 	if !strings.Contains(body, "View as") || !strings.Contains(body, "/datasources") {
 		t.Error("admin dashboard should show the view selector and admin card")
 	}
-	// Operator preview shows the missions card, not the admin card.
+	// Operator preview shows the "Your datasets" card, not the admin card.
 	op := get("?view=operator")
-	if !strings.Contains(op, "/missions") {
-		t.Error("operator view should link to /missions")
+	if !strings.Contains(op, "Your datasets") {
+		t.Error("operator view should show the 'Your datasets' card")
 	}
 	if strings.Contains(op, "/datasources") {
 		t.Error("operator view should NOT show admin data-source link")
 	}
 
-	// Non-admin never sees the selector.
+	// Non-admin never sees the selector; gets the operator dashboard.
 	userTok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: userTok})
@@ -637,24 +651,22 @@ func TestDashboardAdminViewSelector(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "View as") {
 		t.Error("non-admin should not see the view selector")
 	}
-	if !strings.Contains(rec.Body.String(), "/missions") {
-		t.Error("non-admin dashboard should show the operator missions card")
+	if !strings.Contains(rec.Body.String(), "Your datasets") {
+		t.Error("non-admin dashboard should show the operator 'Your datasets' card")
 	}
 }
 
 func TestMissionsFilterByBase(t *testing.T) {
 	kc := authtest.NewKeycloak(t)
 	defer kc.Close()
-	ds := datasource.NewService(datasource.NewMemoryStore())
 	pstore := pilots.NewMemoryStore()
 	ctx := context.Background()
 	_ = pstore.Put(ctx, pilots.Pilot{PilotID: "P1", Base: "Hill AFB", Aircraft: "F-16", MissionStatus: pilots.StatusAvailable})
 	_ = pstore.Put(ctx, pilots.Pilot{PilotID: "P2", Base: "Nellis AFB", Aircraft: "F-16", MissionStatus: pilots.StatusAvailable})
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pstore, ds, nil), dataset.NewService(dataset.NewMemoryStore(), ds, nil))
-	if err != nil {
-		t.Fatalf("server: %v", err)
-	}
-	h := srv.Routes()
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "pilots", "USAF Pilots", operators.KindPilots, "pilots")
+	_ = ops.SetAssignments(ctx, "pilots", []string{"s1"})
+	h := opServer(t, kc, pstore, ops)
 	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
 
 	req := httptest.NewRequest(http.MethodGet, "/missions?base=Hill+AFB", nil)

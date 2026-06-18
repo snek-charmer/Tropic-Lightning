@@ -1,0 +1,77 @@
+{{define "operators.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operators · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 880px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    .muted { color: #777; }
+    .err { background:#fff0f0; color:#d63031; padding:.6rem 1rem; border-radius:8px; }
+    label { display:block; font-weight:600; margin:.6rem 0 .2rem; font-size:.9rem; }
+    input[type=text] { padding:.5rem; border:1px solid #ccc; border-radius:8px; font:inherit; }
+    .btn { display:inline-block; background:#4636f5; color:#fff; border:none; padding:.5rem 1rem; border-radius:8px; font:inherit; font-weight:600; cursor:pointer; text-decoration:none; }
+    .btn.danger { background:#fff; color:#d63031; border:1px solid #d63031; padding:.3rem .7rem; font-size:.85rem; }
+    table { width:100%; border-collapse:collapse; margin-top:.5rem; font-size:.9rem; }
+    th, td { text-align:left; padding:.45rem .5rem; border-bottom:1px solid #eee; vertical-align:top; }
+    .ops label { display:inline-flex; align-items:center; gap:.3rem; font-weight:400; margin:0 .8rem .3rem 0; }
+    code { background:#f4f4f8; padding:.05rem .3rem; border-radius:4px; }
+    .row { display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">← Dashboard</a></p>
+  <h1>Operators &amp; assignments</h1>
+  {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+  <div class="card">
+    <h2>Operators</h2>
+    <p class="muted">Register operator identities (Keycloak usernames). This records who may be assigned datasets; the Keycloak account is managed in Keycloak/UDS.</p>
+    <form method="POST" action="/operators" class="row">
+      <div><label for="u">Username</label><input type="text" id="u" name="username" placeholder="s1" required></div>
+      <div><label for="d">Display name</label><input type="text" id="d" name="display_name" placeholder="Operator One"></div>
+      <button class="btn" type="submit">Add operator</button>
+    </form>
+    {{if .Operators}}
+    <table>
+      <thead><tr><th>Username</th><th>Display name</th><th></th></tr></thead>
+      <tbody>
+        {{range .Operators}}
+        <tr>
+          <td><code>{{.Username}}</code></td>
+          <td>{{.DisplayName}}</td>
+          <td><form method="POST" action="/operators/{{.Username}}/delete" onsubmit="return confirm('Remove {{.Username}}?');"><button class="btn danger" type="submit">Remove</button></form></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="muted">No operators yet.</p>{{end}}
+  </div>
+
+  <div class="card">
+    <h2>Dataset assignments</h2>
+    <p class="muted">Tick the operators who should see each dataset, then Save.</p>
+    {{if .Datasets}}
+      {{$ops := .Operators}}
+      {{range .Datasets}}
+      {{$d := .}}
+      <form method="POST" action="/datasets/{{.Key}}/assign" style="border-top:1px solid #eee; padding-top:.8rem; margin-top:.8rem;">
+        <strong>{{.Name}}</strong> <span class="muted">({{.Kind}} · <code>{{.Collection}}</code>)</span>
+        <div class="ops" style="margin-top:.4rem;">
+          {{if $ops}}
+            {{range $ops}}
+            <label><input type="checkbox" name="op" value="{{.Username}}" {{if $d.AssignedToUser .Username}}checked{{end}}>{{.Username}}</label>
+            {{end}}
+          {{else}}<span class="muted">Add operators above first.</span>{{end}}
+        </div>
+        {{if $ops}}<button class="btn" type="submit" style="margin-top:.5rem;">Save</button>{{end}}
+      </form>
+      {{end}}
+    {{else}}
+      <p class="muted">No datasets registered yet. Import pilots or upload a file first.</p>
+    {{end}}
+  </div>
+</body>
+</html>{{end}}
