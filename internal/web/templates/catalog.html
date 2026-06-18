@@ -9,10 +9,12 @@
     {{end}}
   </div>
   <span class="spacer"></span>
+  <form method="POST" action="/catalog/sync" style="display:inline;"><button class="btn ghost sm" type="submit" title="Find data sources that synced in from other peat nodes">↻ Sync from mesh</button></form>
   <a class="btn ghost sm" href="/combine/new">+ Combine sources</a>
 </div>
 
 {{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
+{{if .Synced}}<div class="banner ok">{{if eq .Synced "0"}}No new data sources found in the mesh — the catalog is up to date.{{else}}Discovered {{.Synced}} new data source(s) from the mesh.{{end}}</div>{{end}}
 
 <div class="card">
   {{if .Items}}

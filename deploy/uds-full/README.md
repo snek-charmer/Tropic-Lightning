@@ -4,7 +4,7 @@ A single, transportable bundle that stands up the **whole platform from nothing*
 
 1. **UDS init** (`v0.39.0`) — in-cluster registry + Zarf agent.
 2. **UDS Core, slim-dev** (`0.40.0`) — Istio + Keycloak (SSO) + Pepr/UDS Operator.
-3. **keycloak-portal** (`0.1.28`) — the app (built from `../zarf`).
+3. **keycloak-portal** (`0.1.29`) — the app (built from `../zarf`).
 
 Packages deploy in that order. Use this for a fresh cluster (e.g. local k3s) or
 air-gap transport. If init + Core are **already** on the cluster, use the
@@ -20,11 +20,11 @@ Bundles are architecture-specific.
 
 ```bash
 # from this directory (deploy/uds-full)
-docker build -t keycloak-portal:0.1.28 ../..
+docker build -t keycloak-portal:0.1.29 ../..
 uds create . --architecture amd64 --confirm      # or --architecture arm64
 ```
 
-This produces `uds-bundle-keycloak-portal-stack-<arch>-0.1.28.tar.zst` — the
+This produces `uds-bundle-keycloak-portal-stack-<arch>-0.1.29.tar.zst` — the
 single file you transport.
 
 ## Deploy
@@ -44,7 +44,7 @@ uds deploy uds-bundle-keycloak-portal-stack-*.tar.zst --confirm \
 
 ## Notes
 
-- **Versions are pinned** here (init `v0.39.0`, Core `0.40.0`, app `0.1.28`). Bump
+- **Versions are pinned** here (init `v0.39.0`, Core `0.40.0`, app `0.1.29`). Bump
   the `ref`s in `uds-bundle.yaml` to move them together.
 - For a **fully air-gapped** site, also set `--set API_EGRESS=false` and point
   `--set WEATHER_API_URL=` at an in-cluster mirror (see the app's config).

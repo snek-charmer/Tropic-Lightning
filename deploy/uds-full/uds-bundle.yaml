@@ -8,7 +8,7 @@
 # app-only bundle at ../uds instead.
 #
 # Build (run from this directory; build the app image first):
-#   docker build -t keycloak-portal:0.1.28 ../..
+#   docker build -t keycloak-portal:0.1.29 ../..
 #   uds create . --architecture amd64 --confirm      # or arm64
 # Deploy:
 #   uds deploy uds-bundle-keycloak-portal-stack-*.tar.zst --confirm \
@@ -19,25 +19,28 @@ metadata:
   description: >-
     Transportable stack — UDS init + UDS Core (slim-dev) + the Keycloak OIDC
     portal with peat-backed, edge/disconnected data sources.
-  version: "0.1.28"
+  version: "0.1.29"
 
 packages:
   # 1) UDS-flavored Zarf init: in-cluster registry, Zarf agent, etc.
   - name: init
-    repository: ghcr.io/defenseunicorns/packages/init
-    ref: v0.39.0
+    repository: ghcr.io/zarf-dev/packages/init
+    ref: v0.77.0
 
   # 2) UDS Core (slim-dev): Istio + Keycloak (SSO) + Pepr/UDS Operator — the
   #    platform pieces the portal depends on. Lighter than full Core; good for
   #    local/single-node. DOMAIN defaults to uds.dev; override to match the app.
   - name: core-slim-dev
-    repository: ghcr.io/defenseunicorns/packages/uds/core-slim-dev
-    ref: 0.40.0
+    repository: registry.defenseunicorns.com/public/core
+    ref: 1.6.0-registry1
 
+  - name: peat-node
+    path: .
+    ref: 0.3.3
   # 3) The application (built from the local Zarf package at deploy/zarf).
   - name: keycloak-portal
     path: ../zarf
-    ref: 0.1.28
+    ref: 0.1.29
     overrides:
       # <zarf-component>: <helm-chart>:
       keycloak-portal:
@@ -48,7 +51,7 @@ packages:
             - path: image.repository
               value: keycloak-portal
             - path: image.tag
-              value: "0.1.28"
+              value: "0.1.29"
           variables:
             - name: PORTAL_HOST
               path: uds.expose.host

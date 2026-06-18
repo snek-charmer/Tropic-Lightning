@@ -142,6 +142,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Data-source catalog: any authenticated user browses and self-subscribes.
 	mux.Handle("GET /catalog", authed(s.handleCatalogPage))
+	mux.Handle("POST /catalog/sync", authed(s.handleCatalogSync))
 	mux.Handle("POST /catalog/{key}/subscribe", authed(s.handleSubscribe))
 	mux.Handle("POST /catalog/{key}/unsubscribe", authed(s.handleUnsubscribe))
 
@@ -1338,38 +1339,67 @@ func (s *Server) forbidden(w http.ResponseWriter, r *http.Request) {
 
 // --- operators & assignments (admin only) ---
 
-// reconcileDatasets ensures the registry contains every uploaded/live dataset
-// present in the data-source catalog (dataset:// entries) plus combined sources,
-// so they all show up in the catalog. Idempotent; preserves subscriptions.
-func (s *Server) reconcileDatasets(ctx context.Context) {
+// reconcileDatasets ensures the registry contains every dataset known to the
+// node — catalog (dataset://) entries, combined sources, AND any dataset
+// collection present in the peat node (e.g. synced in from a peer that this app
+// has no local record of) — so they all show up in the catalog. Idempotent;
+// preserves subscriptions. Returns the number of *newly discovered* datasets
+// (ones that weren't already registered).
+func (s *Server) reconcileDatasets(ctx context.Context) int {
 	// Drop the legacy "pilots" demo dataset if it lingers from older versions.
 	_ = s.operators.DeleteDataset(ctx, "pilots")
-	sources, err := s.dataSources.List(ctx)
-	if err != nil {
+
+	known := map[string]bool{}
+	if existing, err := s.operators.ListDatasets(ctx); err == nil {
+		for _, d := range existing {
+			known[d.Key] = true
+		}
+	}
+
+	if sources, err := s.dataSources.List(ctx); err == nil {
+		for _, d := range sources {
+			if c, ok := strings.CutPrefix(d.Endpoint, "dataset://"); ok && c != "" {
+				if err := s.operators.RegisterDataset(ctx, c, d.Name, operators.KindGeneric, c); err != nil {
+					slog.Warn("reconcile dataset", "collection", c, "err", err)
+				}
+			}
+		}
+	} else {
 		slog.Warn("reconcile: list data sources", "err", err)
-		return
 	}
-	for _, d := range sources {
-		if c, ok := strings.CutPrefix(d.Endpoint, "dataset://"); ok && c != "" {
-			if err := s.operators.RegisterDataset(ctx, c, d.Name, operators.KindGeneric, c); err != nil {
-				slog.Warn("reconcile dataset", "collection", c, "err", err)
-			}
-		}
-	}
-	// Combined sources are virtual datasets; register them so they're listed and
-	// subscribable in the catalog.
+
+	// Combined sources are virtual datasets; register them so they're listed.
 	if s.combine != nil {
-		combos, err := s.combine.List(ctx)
-		if err != nil {
-			slog.Warn("reconcile: list combined sources", "err", err)
-			return
-		}
-		for _, c := range combos {
-			if err := s.operators.RegisterDataset(ctx, c.Key, c.Name, operators.KindCombined, c.Key); err != nil {
-				slog.Warn("reconcile combined source", "key", c.Key, "err", err)
+		if combos, err := s.combine.List(ctx); err == nil {
+			for _, c := range combos {
+				if err := s.operators.RegisterDataset(ctx, c.Key, c.Name, operators.KindCombined, c.Key); err != nil {
+					slog.Warn("reconcile combined source", "key", c.Key, "err", err)
+				}
 			}
+		} else {
+			slog.Warn("reconcile: list combined sources", "err", err)
 		}
 	}
+
+	// Discover dataset collections sitting in the peat node (incl. mesh-synced
+	// ones) that aren't registered yet, and add them so users can subscribe.
+	added := 0
+	if refs, err := s.datasets.Discover(ctx); err == nil {
+		for _, ref := range refs {
+			if known[ref.Collection] {
+				continue
+			}
+			if err := s.operators.RegisterDataset(ctx, ref.Collection, ref.Name, operators.KindGeneric, ref.Collection); err != nil {
+				slog.Warn("reconcile discovered dataset", "collection", ref.Collection, "err", err)
+				continue
+			}
+			known[ref.Collection] = true
+			added++
+		}
+	} else {
+		slog.Warn("reconcile: discover datasets", "err", err)
+	}
+	return added
 }
 
 func (s *Server) handleOperatorsPage(w http.ResponseWriter, r *http.Request) {
@@ -1442,7 +1472,15 @@ func (s *Server) handleCatalogPage(w http.ResponseWriter, r *http.Request) {
 		"TotalCount": len(items),
 		"Preview":    preview, // previewing another user: show their subs, hide actions
 		"Error":      r.URL.Query().Get("error"),
+		"Synced":     r.URL.Query().Get("synced"),
 	})
+}
+
+// handleCatalogSync runs discovery on demand: surface any dataset collections in
+// the peat node (incl. mesh-synced) that aren't in the catalog yet.
+func (s *Server) handleCatalogSync(w http.ResponseWriter, r *http.Request) {
+	added := s.reconcileDatasets(r.Context())
+	http.Redirect(w, r, "/catalog?synced="+strconv.Itoa(added), http.StatusSeeOther)
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {

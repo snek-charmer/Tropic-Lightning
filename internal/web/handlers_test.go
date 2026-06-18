@@ -1615,3 +1615,49 @@ func TestPublishToDeckFlow(t *testing.T) {
 		t.Error("decks page should list the new deck")
 	}
 }
+
+func TestDiscoverSyncedDatasetIntoCatalog(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	// A dataset sitting in the peat node (as if synced from a peer) with NO
+	// catalog/registry entry — the app has "no knowledge" of it.
+	_ = dstore.PutMeta(ctx, "ds_synced", "Synced Roster", []string{"name"})
+	_ = dstore.PutRow(ctx, "ds_synced", "r1", map[string]string{"name": "A"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore()) // registry empty
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	// Manual "Sync from mesh" discovers it (count = 1) ...
+	sr := httptest.NewRequest(http.MethodPost, "/catalog/sync", nil)
+	sr.Header.Set("Authorization", "Bearer "+tok)
+	srr := httptest.NewRecorder()
+	h.ServeHTTP(srr, sr)
+	if loc := srr.Header().Get("Location"); loc != "/catalog?synced=1" {
+		t.Fatalf("sync redirect = %q, want /catalog?synced=1", loc)
+	}
+	// ... and it now appears in the catalog, subscribable.
+	cr := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	cr.Header.Set("Authorization", "Bearer "+tok)
+	crr := httptest.NewRecorder()
+	h.ServeHTTP(crr, cr)
+	body := crr.Body.String()
+	if !strings.Contains(body, "Synced Roster") || !strings.Contains(body, "/catalog/ds_synced/subscribe") {
+		t.Error("discovered dataset should appear in the catalog with a subscribe control")
+	}
+	// A user can subscribe to it → access granted.
+	subr := httptest.NewRequest(http.MethodPost, "/catalog/ds_synced/subscribe", nil)
+	utok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	subr.Header.Set("Authorization", "Bearer "+utok)
+	h.ServeHTTP(httptest.NewRecorder(), subr)
+	if !ops.IsAssigned(ctx, "ds_synced", "s1") {
+		t.Error("user should be able to subscribe to a discovered dataset")
+	}
+}

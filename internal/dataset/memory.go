@@ -67,6 +67,17 @@ func (s *MemoryStore) Meta(_ context.Context, collection string) (string, []stri
 	return c.name, c.cols, nil
 }
 
+func (s *MemoryStore) ListCollections(_ context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.data))
+	for c := range s.data {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (s *MemoryStore) ListRows(_ context.Context, collection string) ([]Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

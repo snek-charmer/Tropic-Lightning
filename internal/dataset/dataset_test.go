@@ -307,3 +307,27 @@ func TestDelimiterDetectAndReparse(t *testing.T) {
 		t.Errorf("imported cols=%v rows=%d", cols, len(rows))
 	}
 }
+
+func TestDiscover(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	_ = store.PutMeta(ctx, "ds_alpha", "Alpha", []string{"x"})
+	_ = store.PutMeta(ctx, "wx_bravo", "Bravo Weather", []string{"location"})
+	_ = store.PutMeta(ctx, "saved_views", "should be skipped", []string{"x"}) // reserved name
+	svc := NewService(store, nil, nil)
+
+	refs, err := svc.Discover(ctx)
+	if err != nil {
+		t.Fatalf("discover: %v", err)
+	}
+	got := map[string]string{}
+	for _, r := range refs {
+		got[r.Collection] = r.Name
+	}
+	if got["ds_alpha"] != "Alpha" || got["wx_bravo"] != "Bravo Weather" {
+		t.Errorf("discover = %v, want ds_alpha + wx_bravo", got)
+	}
+	if _, ok := got["saved_views"]; ok {
+		t.Error("reserved collection should be skipped")
+	}
+}

@@ -30,6 +30,9 @@ type Store interface {
 	DeleteRow(ctx context.Context, collection, id string) error
 	Meta(ctx context.Context, collection string) (name string, cols []string, err error)
 	ListRows(ctx context.Context, collection string) ([]Row, error)
+	// ListCollections enumerates dataset collections known to the node (including
+	// ones synced in from peers), so the catalog can discover them.
+	ListCollections(ctx context.Context) ([]string, error)
 }
 
 // Row is a dataset row with its document ID (needed for edits/deletes).
@@ -76,7 +79,35 @@ func (s *PeatStore) put(ctx context.Context, collection, id string, v any) error
 }
 
 func (s *PeatStore) PutMeta(ctx context.Context, collection, name string, cols []string) error {
-	return s.put(ctx, collection, metaDocID, metaDoc{Name: name, Columns: cols})
+	if err := s.put(ctx, collection, metaDocID, metaDoc{Name: name, Columns: cols}); err != nil {
+		return err
+	}
+	// Best-effort: register a collection config (documented default policy) so the
+	// collection is enumerable mesh-wide and discoverable on peers. Ignored on
+	// older peat nodes that don't support it.
+	_, _ = s.client.SetCollectionConfig(ctx, &sidecarv1.SetCollectionConfigRequest{
+		Config: &sidecarv1.CollectionConfig{
+			Collection:     collection,
+			DeletionPolicy: sidecarv1.DeletionPolicy_DELETION_POLICY_SOFT_DELETE,
+		},
+	})
+	return nil
+}
+
+// ListCollections returns the collection names the node knows about, via the
+// peat collection-config registry (includes collections synced from peers).
+func (s *PeatStore) ListCollections(ctx context.Context) ([]string, error) {
+	resp, err := s.client.ListCollectionConfigs(ctx, &sidecarv1.ListCollectionConfigsRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("peat ListCollectionConfigs: %w", err)
+	}
+	out := make([]string, 0, len(resp.Configs))
+	for _, c := range resp.Configs {
+		if c != nil && c.Collection != "" {
+			out = append(out, c.Collection)
+		}
+	}
+	return out, nil
 }
 
 func (s *PeatStore) PutRow(ctx context.Context, collection, id string, fields map[string]string) error {
