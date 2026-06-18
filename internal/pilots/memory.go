@@ -24,6 +24,16 @@ func (s *MemoryStore) Put(_ context.Context, p Pilot) error {
 	return nil
 }
 
+func (s *MemoryStore) Get(_ context.Context, id string) (Pilot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.data[id]
+	if !ok {
+		return Pilot{}, ErrNotFound
+	}
+	return p, nil
+}
+
 func (s *MemoryStore) List(_ context.Context) ([]Pilot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

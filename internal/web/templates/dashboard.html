@@ -11,6 +11,7 @@
     .admin { background: #fff0f0; color: #d63031; padding: .5rem 1rem; border-radius: 8px; }
     .muted { color: #777; }
     .btn { display: inline-block; background: #fff; color: #4636f5; border: 1px solid #4636f5; padding: .5rem 1rem; border-radius: 8px; text-decoration: none; cursor: pointer; font: inherit; }
+    .btn.active { background: #4636f5; color: #fff; }
     h1 { margin-top: 0; }
     code { background: #f4f4f8; padding: .1rem .35rem; border-radius: 4px; }
     .status { display: inline-flex; align-items: center; gap: .5rem; font-weight: 600; }
@@ -67,10 +68,27 @@
 
   {{if .IsAdmin}}
   <div class="card">
+    <h2>View as</h2>
+    <p class="muted">Preview the experience for each role.</p>
+    <a class="btn {{if eq .View "admin"}}active{{end}}" href="/dashboard?view=admin">Admin</a>
+    <a class="btn {{if eq .View "operator"}}active{{end}}" href="/dashboard?view=operator" style="margin-left:.4rem;">Operator (s1)</a>
+  </div>
+  {{end}}
+
+  {{if and .IsAdmin (eq .View "admin")}}
+  <div class="card">
     <h2>Admin</h2>
-    <p>Manage external system connections that sync across the edge mesh.</p>
+    <p>Manage external system connections and the pilots dataset.</p>
     <a class="btn" href="/datasources">Manage data sources →</a>
     <a class="btn" href="/pilots" style="margin-left:.5rem;">USAF pilots dataset →</a>
+  </div>
+  {{end}}
+
+  {{if eq .View "operator"}}
+  <div class="card">
+    <h2>Mission readiness {{if .IsAdmin}}<span class="muted">(operator preview)</span>{{end}}</h2>
+    <p>View pilot availability and update status — mark a pilot sick/grounded or return them to duty. The status wheel shows how many are available to fly.</p>
+    <a class="btn" href="/missions">Open mission readiness →</a>
   </div>
   {{end}}
 

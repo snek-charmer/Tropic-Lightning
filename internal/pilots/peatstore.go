@@ -57,6 +57,21 @@ func (s *PeatStore) Put(ctx context.Context, p Pilot) error {
 	return nil
 }
 
+func (s *PeatStore) Get(ctx context.Context, id string) (Pilot, error) {
+	got, err := s.client.GetDocument(ctx, &sidecarv1.GetDocumentRequest{Collection: collection, DocId: id})
+	if err != nil {
+		return Pilot{}, fmt.Errorf("peat GetDocument(%s): %w", id, err)
+	}
+	if got.JsonData == nil {
+		return Pilot{}, ErrNotFound
+	}
+	var p Pilot
+	if err := json.Unmarshal([]byte(*got.JsonData), &p); err != nil {
+		return Pilot{}, fmt.Errorf("decoding pilot %s: %w", id, err)
+	}
+	return p, nil
+}
+
 func (s *PeatStore) List(ctx context.Context) ([]Pilot, error) {
 	resp, err := s.client.ListDocuments(ctx, &sidecarv1.ListDocumentsRequest{Collection: collection})
 	if err != nil {

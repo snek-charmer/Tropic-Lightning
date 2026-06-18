@@ -2,10 +2,27 @@ package pilots
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 )
+
+// Summary is the readiness rollup powering the operator status wheel.
+type Summary struct {
+	Total     int `json:"total"`
+	Available int `json:"available"`
+	Grounded  int `json:"grounded"`
+}
+
+// AvailablePct returns the available share as a 0–100 integer.
+func (s Summary) AvailablePct() int {
+	if s.Total == 0 {
+		return 0
+	}
+	return int(float64(s.Available)/float64(s.Total)*100 + 0.5)
+}
 
 const (
 	catalogName   = "USAF Pilots (MHS Genesis synthetic)"
@@ -32,12 +49,28 @@ func NewService(store Store, catalog *datasource.Service, log *slog.Logger) *Ser
 
 // Import parses the embedded dataset, writes every pilot into the store (peat),
 // and registers the catalog entry. Returns the number of pilots imported.
+// Operator-set mission status is preserved across re-imports.
 func (s *Service) Import(ctx context.Context) (int, error) {
 	pilots, err := ParseDataset()
 	if err != nil {
 		return 0, err
 	}
+
+	// Preserve operator edits: keep mission status for pilots a user has touched.
+	existing := map[string]Pilot{}
+	if cur, err := s.store.List(ctx); err == nil {
+		for _, p := range cur {
+			existing[p.PilotID] = p
+		}
+	}
+
 	for _, p := range pilots {
+		if prev, ok := existing[p.PilotID]; ok && prev.StatusBy != "" {
+			p.MissionStatus = prev.MissionStatus
+			p.StatusNote = prev.StatusNote
+			p.StatusBy = prev.StatusBy
+			p.StatusAt = prev.StatusAt
+		}
 		if err := s.store.Put(ctx, p); err != nil {
 			return 0, err
 		}
@@ -56,6 +89,43 @@ func (s *Service) List(ctx context.Context) ([]Pilot, error) { return s.store.Li
 
 // Count returns how many pilots are stored.
 func (s *Service) Count(ctx context.Context) (int, error) { return s.store.Count(ctx) }
+
+// SetStatus updates a pilot's mission availability (operator action). status
+// must be "available" or "grounded"; by records who made the change.
+func (s *Service) SetStatus(ctx context.Context, id, status, note, by string) (Pilot, error) {
+	if status != StatusAvailable && status != StatusGrounded {
+		return Pilot{}, fmt.Errorf("invalid status %q (want %q or %q)", status, StatusAvailable, StatusGrounded)
+	}
+	p, err := s.store.Get(ctx, id)
+	if err != nil {
+		return Pilot{}, err
+	}
+	p.MissionStatus = status
+	p.StatusNote = note
+	p.StatusBy = by
+	p.StatusAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.store.Put(ctx, p); err != nil {
+		return Pilot{}, err
+	}
+	return p, nil
+}
+
+// ReadinessSummary rolls up availability for the status wheel.
+func (s *Service) ReadinessSummary(ctx context.Context) (Summary, error) {
+	all, err := s.store.List(ctx)
+	if err != nil {
+		return Summary{}, err
+	}
+	sum := Summary{Total: len(all)}
+	for _, p := range all {
+		if p.Available() {
+			sum.Available++
+		} else {
+			sum.Grounded++
+		}
+	}
+	return sum, nil
+}
 
 // ensureCatalog creates the data-source catalog entry once (idempotent by name).
 func (s *Service) ensureCatalog(ctx context.Context) error {

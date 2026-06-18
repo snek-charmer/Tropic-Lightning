@@ -1,0 +1,102 @@
+{{define "missions.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mission Readiness · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    .muted { color: #777; }
+    .ok { background: #e6f7ed; color: #1c7a44; padding: .6rem 1rem; border-radius: 8px; }
+    .err { background: #fff0f0; color: #d63031; padding: .6rem 1rem; border-radius: 8px; }
+    .readiness { display: flex; align-items: center; gap: 2rem; flex-wrap: wrap; }
+    .wheel {
+      width: 180px; height: 180px; border-radius: 50%; flex: none;
+      background: conic-gradient(#1c9d52 0 {{.AvailPct}}%, #d63031 {{.AvailPct}}% 100%);
+      display: grid; place-items: center; position: relative;
+    }
+    .wheel::after { content: ""; width: 116px; height: 116px; background: #fff; border-radius: 50%; position: absolute; }
+    .wheel .label { position: relative; z-index: 1; text-align: center; }
+    .wheel .label .big { font-size: 1.8rem; font-weight: 800; }
+    .legend span { display: inline-flex; align-items: center; gap: .4rem; margin-right: 1rem; }
+    .swatch { width: .8rem; height: .8rem; border-radius: 3px; display: inline-block; }
+    .swatch.g { background: #1c9d52; } .swatch.r { background: #d63031; }
+    table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .85rem; }
+    th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #eee; }
+    .pill { display:inline-block; padding:.1rem .55rem; border-radius:999px; font-size:.72rem; font-weight:700; }
+    .pill.avail { background:#e6f7ed; color:#1c7a44; } .pill.ground { background:#fff0f0; color:#d63031; }
+    form.inline { display: inline; }
+    .btn { background: #4636f5; color:#fff; border:none; padding:.3rem .7rem; border-radius:6px; font:inherit; font-size:.8rem; cursor:pointer; }
+    .btn.danger { background:#d63031; } .btn.ghost { background:#fff; color:#4636f5; border:1px solid #4636f5; }
+    input.note { padding:.25rem .4rem; border:1px solid #ccc; border-radius:6px; font:inherit; font-size:.8rem; width:9rem; }
+    code { background:#f4f4f8; padding:.05rem .3rem; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">← Dashboard</a></p>
+  <h1>Mission Readiness</h1>
+
+  {{if .Updated}}<p class="ok">Updated pilot {{.Updated}}.</p>{{end}}
+  {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+  <div class="card">
+    <div class="readiness">
+      <div class="wheel">
+        <div class="label">
+          <div class="big">{{.Summary.Available}}/{{.Summary.Total}}</div>
+          <div class="muted">available</div>
+        </div>
+      </div>
+      <div>
+        <h2 style="margin:.2rem 0;">{{.AvailPct}}% mission-available</h2>
+        <p class="legend">
+          <span><span class="swatch g"></span>{{.Summary.Available}} available</span>
+          <span><span class="swatch r"></span>{{.Summary.Grounded}} grounded</span>
+        </p>
+        <p class="muted">Mark a pilot grounded (e.g. sick) and the wheel updates.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pilots {{if lt .Shown .Summary.Total}}<span class="muted">(showing first {{.Shown}} of {{.Summary.Total}})</span>{{end}}</h2>
+    {{if .Pilots}}
+    <table>
+      <thead><tr><th>ID</th><th>Rank</th><th>Aircraft</th><th>Base</th><th>Status</th><th>Note</th><th>Action</th></tr></thead>
+      <tbody>
+        {{range .Pilots}}
+        <tr>
+          <td><code>{{.PilotID}}</code></td>
+          <td>{{.Rank}}</td>
+          <td>{{.Aircraft}}</td>
+          <td>{{.Base}}</td>
+          <td>
+            {{if .Available}}<span class="pill avail">available</span>{{else}}<span class="pill ground">grounded</span>{{end}}
+          </td>
+          <td class="muted">{{.StatusNote}}</td>
+          <td>
+            {{if .Available}}
+            <form class="inline" method="POST" action="/pilots/{{.PilotID}}/status">
+              <input type="hidden" name="status" value="grounded">
+              <input class="note" type="text" name="note" placeholder="reason (e.g. sick)">
+              <button class="btn danger" type="submit">Ground</button>
+            </form>
+            {{else}}
+            <form class="inline" method="POST" action="/pilots/{{.PilotID}}/status">
+              <input type="hidden" name="status" value="available">
+              <button class="btn ghost" type="submit">Return to duty</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+      <p class="muted">No pilots loaded yet. An admin needs to import the dataset first.</p>
+    {{end}}
+  </div>
+</body>
+</html>{{end}}
