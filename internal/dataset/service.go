@@ -37,18 +37,29 @@ func NewService(store Store, catalog *datasource.Service, log *slog.Logger) *Ser
 	return &Service{store: store, hold: NewHold(15 * time.Minute), catalog: catalog, log: log}
 }
 
-// Stage parses an uploaded file and holds it for preview, returning a token and
-// the parsed table.
+// Stage holds the raw upload and returns a token plus an auto-detected-delimiter
+// preview.
 func (s *Service) Stage(filename string, data []byte) (string, Parsed, error) {
-	p, err := Parse(filename, data)
+	// Parse once up front so obvious errors (bad type, empty) surface immediately.
+	p, err := Parse(filename, data, 0) // 0 = auto-detect delimiter
 	if err != nil {
 		return "", Parsed{}, err
 	}
-	token, err := s.hold.Put(p)
+	token, err := s.hold.Put(filename, data)
 	if err != nil {
 		return "", Parsed{}, err
 	}
 	return token, p, nil
+}
+
+// Preview re-parses the held upload with the chosen delimiter (name; "" or
+// "auto" = auto-detect). Lets the user fix mis-delimited files before importing.
+func (s *Service) Preview(token, delimiter string) (Parsed, error) {
+	filename, data, ok := s.hold.Get(token)
+	if !ok {
+		return Parsed{}, fmt.Errorf("upload expired or not found; please re-upload")
+	}
+	return Parse(filename, data, DelimiterRune(delimiter))
 }
 
 // ImportResult reports the outcome of an import.
@@ -59,12 +70,17 @@ type ImportResult struct {
 	Capped     bool
 }
 
-// Import ingests the held upload (token) keeping only the named columns, into a
-// peat collection derived from name, and registers a data-source catalog entry.
-func (s *Service) Import(ctx context.Context, token, name string, keep []string) (ImportResult, error) {
-	p, ok := s.hold.Get(token)
+// Import ingests the held upload (token), re-parsed with the chosen delimiter,
+// keeping only the named columns, into a peat collection derived from name, and
+// registers a data-source catalog entry.
+func (s *Service) Import(ctx context.Context, token, name, delimiter string, keep []string) (ImportResult, error) {
+	filename, data, ok := s.hold.Get(token)
 	if !ok {
 		return ImportResult{}, fmt.Errorf("upload expired or not found; please re-upload")
+	}
+	p, err := Parse(filename, data, DelimiterRune(delimiter))
+	if err != nil {
+		return ImportResult{}, err
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {

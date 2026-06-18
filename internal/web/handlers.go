@@ -98,6 +98,7 @@ func (s *Server) Routes() http.Handler {
 	// File upload -> preview/format -> ingest as a dataset (admin only).
 	mux.Handle("GET /datasources/upload", admin(s.handleUploadPage))
 	mux.Handle("POST /datasources/upload", admin(s.handleUploadParse))
+	mux.Handle("POST /datasources/preview", admin(s.handleDatasetPreview))
 	mux.Handle("POST /datasources/import", admin(s.handleDatasetImport))
 
 	// Pilots import/manage (admin-only).
@@ -470,17 +471,39 @@ func (s *Server) handleUploadParse(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	writeJSON(w, http.StatusOK, previewJSON(token, parsed))
+}
+
+// handleDatasetPreview re-parses a held upload with a chosen delimiter so the
+// admin can fix a mis-delimited file before importing.
+func (s *Server) handleDatasetPreview(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid form"})
+		return
+	}
+	parsed, err := s.datasets.Preview(r.PostFormValue("token"), r.PostFormValue("delimiter"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, previewJSON(r.PostFormValue("token"), parsed))
+}
+
+// previewJSON shapes a parsed upload for the in-browser preview.
+func previewJSON(token string, parsed dataset.Parsed) map[string]any {
 	sample := parsed.Rows
 	if len(sample) > 20 {
 		sample = sample[:20]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"token":    token,
-		"filename": parsed.Filename,
-		"columns":  parsed.Columns,
-		"rows":     sample,
-		"total":    len(parsed.Rows),
-	})
+	return map[string]any{
+		"token":            token,
+		"filename":         parsed.Filename,
+		"columns":          parsed.Columns,
+		"rows":             sample,
+		"total":            len(parsed.Rows),
+		"delimiter":        parsed.Delimiter, // "" for xlsx
+		"delimiterOptions": dataset.DelimiterNames(),
+	}
 }
 
 // handleDatasetImport ingests the held upload, keeping the submitted columns.
@@ -491,9 +514,10 @@ func (s *Server) handleDatasetImport(w http.ResponseWriter, r *http.Request) {
 	}
 	token := r.PostFormValue("token")
 	name := r.PostFormValue("name")
+	delimiter := r.PostFormValue("delimiter")
 	keep := r.PostForm["col"] // checked columns to keep
 
-	res, err := s.datasets.Import(r.Context(), token, name, keep)
+	res, err := s.datasets.Import(r.Context(), token, name, delimiter, keep)
 	if err != nil {
 		http.Redirect(w, r, "/datasources/upload?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 		return

@@ -91,7 +91,16 @@
       "Bash(gofmt -w internal/web/)",
       "Bash(perl -0pi -e 's/\\\\t\\\\/\\\\/ And it.s now in the registry\\\\.\\\\n\\\\tif _, err := ops\\\\.GetDataset; false \\\\{\\\\n\\\\t\\\\t_ = err\\\\n\\\\t\\\\}\\\\n//' internal/web/handlers_test.go)",
       "Bash(gofmt -w internal/web/handlers.go internal/dataset/)",
-      "Bash(gofmt -w internal/web/ internal/dataset/)"
+      "Bash(gofmt -w internal/web/ internal/dataset/)",
+      "Bash(sed -i 's#Parse\\(\"roster.csv\", \\\\[\\\\]byte\\(csv\\)\\)#Parse\\(\"roster.csv\", []byte\\(csv\\), 0\\)#' internal/dataset/dataset_test.go)",
+      "Bash(sed -i 's#Parse\\(\"data.txt\", \\\\[\\\\]byte\\(\"x\"\\)\\)#Parse\\(\"data.txt\", []byte\\(\"x\"\\), 0\\)#' internal/dataset/dataset_test.go)",
+      "Bash(sed -i 's#Parse\\(\"roster.xlsx\", buf.Bytes\\(\\)\\)#Parse\\(\"roster.xlsx\", buf.Bytes\\(\\), 0\\)#' internal/dataset/dataset_test.go)",
+      "Bash(sed -i 's#svc.Import\\(ctx, token, \"Roster\", \\\\[\\\\]string{\"name\", \"age\", \"base\"}\\)#svc.Import\\(ctx, token, \"Roster\", \"\", []string{\"name\", \"age\", \"base\"}\\)#' internal/dataset/dataset_test.go)",
+      "Bash(sed -i 's#svc.Import\\(ctx, token, \"x\", nil\\)#svc.Import\\(ctx, token, \"x\", \"\", nil\\)#' internal/dataset/dataset_test.go)",
+      "Bash(perl -0pi -e 's/\\\\ttok, err := h\\\\.Put\\\\\\(Parsed\\\\{Filename: \"a\\\\.csv\", Columns: \\\\[\\\\]string\\\\{\"x\"\\\\}\\\\}\\\\\\)/\\\\ttok, err := h.Put\\(\"a.csv\", []byte\\(\"x\\\\\\\\n1\\\\\\\\n\"\\)\\)/' internal/dataset/dataset_test.go)",
+      "Bash(perl -0pi -e 's/if _, ok := h\\\\.Get\\\\\\(tok\\\\\\); !ok \\\\{/if _, _, ok := h.Get\\(tok\\); !ok {/' internal/dataset/dataset_test.go)",
+      "Bash(perl -0pi -e 's/if _, ok := h\\\\.Get\\\\\\(tok\\\\\\); ok \\\\{/if _, _, ok := h.Get\\(tok\\); ok {/' internal/dataset/dataset_test.go)",
+      "Bash(gofmt -w internal/dataset/dataset_test.go)"
     ]
   }
 }

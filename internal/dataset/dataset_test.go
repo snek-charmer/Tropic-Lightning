@@ -11,7 +11,7 @@ import (
 
 func TestParseCSV(t *testing.T) {
 	csv := "name,age,base\nAlice,30,Hill\nBob,,Nellis\n"
-	p, err := Parse("roster.csv", []byte(csv))
+	p, err := Parse("roster.csv", []byte(csv), 0)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestParseCSV(t *testing.T) {
 }
 
 func TestParseUnsupported(t *testing.T) {
-	if _, err := Parse("data.txt", []byte("x")); err == nil {
+	if _, err := Parse("data.txt", []byte("x"), 0); err == nil {
 		t.Error("expected error for unsupported extension")
 	}
 }
@@ -42,7 +42,7 @@ func TestImportDropsColumnsAndViews(t *testing.T) {
 	}
 
 	// Keep everything except the sensitive ssn column.
-	res, err := svc.Import(ctx, token, "Roster", []string{"name", "age", "base"})
+	res, err := svc.Import(ctx, token, "Roster", "", []string{"name", "age", "base"})
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -79,22 +79,22 @@ func TestImportDropsColumnsAndViews(t *testing.T) {
 	}
 
 	// Import requires at least one column, and an expired token is rejected.
-	if _, err := svc.Import(ctx, token, "x", nil); err == nil {
+	if _, err := svc.Import(ctx, token, "x", "", nil); err == nil {
 		t.Error("expected error: token consumed / no columns")
 	}
 }
 
 func TestHoldExpiry(t *testing.T) {
 	h := NewHold(0) // defaults to 15m
-	tok, err := h.Put(Parsed{Filename: "a.csv", Columns: []string{"x"}})
+	tok, err := h.Put("a.csv", []byte("x\n1\n"))
 	if err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if _, ok := h.Get(tok); !ok {
+	if _, _, ok := h.Get(tok); !ok {
 		t.Error("expected held upload")
 	}
 	h.Delete(tok)
-	if _, ok := h.Get(tok); ok {
+	if _, _, ok := h.Get(tok); ok {
 		t.Error("expected deleted upload to be gone")
 	}
 }
@@ -108,7 +108,7 @@ func TestParseXLSX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write xlsx: %v", err)
 	}
-	p, err := Parse("roster.xlsx", buf.Bytes())
+	p, err := Parse("roster.xlsx", buf.Bytes(), 0)
 	if err != nil {
 		t.Fatalf("parse xlsx: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestEditColumnsAndRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stage: %v", err)
 	}
-	res, err := svc.Import(ctx, token, "D", []string{"name", "base"})
+	res, err := svc.Import(ctx, token, "D", "", []string{"name", "base"})
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestUpdateRowPopulatesNewColumn(t *testing.T) {
 	svc := NewService(store, nil, nil)
 	ctx := context.Background()
 	token, _, _ := svc.Stage("d.csv", []byte("name\nAlice\n"))
-	res, _ := svc.Import(ctx, token, "D", []string{"name"})
+	res, _ := svc.Import(ctx, token, "D", "", []string{"name"})
 	c := res.Collection
 	_ = svc.AddColumn(ctx, c, "status")
 
@@ -222,7 +222,7 @@ func TestBulkSave(t *testing.T) {
 	svc := NewService(store, nil, nil)
 	ctx := context.Background()
 	token, _, _ := svc.Stage("d.csv", []byte("name,base\nAlice,Hill\nBob,Nellis\nCarol,Luke\n"))
-	res, _ := svc.Import(ctx, token, "D", []string{"name", "base"})
+	res, _ := svc.Import(ctx, token, "D", "", []string{"name", "base"})
 	c := res.Collection
 	_, _, rows, _ := svc.View(ctx, c)
 	// rows sorted by id: r000001 Alice, r000002 Bob, r000003 Carol
@@ -259,5 +259,51 @@ func TestBulkSave(t *testing.T) {
 	}
 	if !alice || !dave {
 		t.Errorf("expected updated Alice and added Dave; rows=%v", rows)
+	}
+}
+
+func TestDelimiterDetectAndReparse(t *testing.T) {
+	pipe := "field1|field2|field3\na|b|c\nd|e|f\n"
+
+	// Auto-detect picks pipe -> 3 columns, not 1.
+	p, err := Parse("d.csv", []byte(pipe), 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(p.Columns) != 3 || p.Delimiter != "pipe" {
+		t.Fatalf("auto-detect = %v cols, delim %q", len(p.Columns), p.Delimiter)
+	}
+
+	// Forcing comma sees a single column (the original bug).
+	c, _ := Parse("d.csv", []byte(pipe), DelimiterRune("comma"))
+	if len(c.Columns) != 1 {
+		t.Errorf("comma parse cols = %d, want 1", len(c.Columns))
+	}
+
+	// Stage holds raw; Preview can re-parse with a chosen delimiter.
+	svc := NewService(NewMemoryStore(), nil, nil)
+	token, staged, err := svc.Stage("d.csv", []byte(pipe))
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if len(staged.Columns) != 3 {
+		t.Errorf("staged auto-detect cols = %d, want 3", len(staged.Columns))
+	}
+	forced, err := svc.Preview(token, "comma")
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if len(forced.Columns) != 1 {
+		t.Errorf("forced-comma preview cols = %d, want 1", len(forced.Columns))
+	}
+
+	// Import with the pipe delimiter yields 3 columns.
+	res, err := svc.Import(context.Background(), token, "Piped", "pipe", []string{"field1", "field2", "field3"})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	_, cols, rows, _ := svc.View(context.Background(), res.Collection)
+	if len(cols) != 3 || len(rows) != 2 {
+		t.Errorf("imported cols=%v rows=%d", cols, len(rows))
 	}
 }

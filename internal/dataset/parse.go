@@ -14,18 +14,83 @@ import (
 )
 
 // Parsed is a tabular file read into memory: a header row plus data rows. Every
-// row is normalised to len(Columns) cells.
+// row is normalised to len(Columns) cells. Delimiter is the CSV delimiter used
+// (name; empty for XLSX).
 type Parsed struct {
-	Filename string
-	Columns  []string
-	Rows     [][]string
+	Filename  string
+	Columns   []string
+	Rows      [][]string
+	Delimiter string
 }
 
-// Parse reads a CSV or XLSX file (by extension) into a Parsed table.
-func Parse(filename string, data []byte) (Parsed, error) {
+// supported CSV delimiters, in detection-priority order.
+var delimiters = []struct {
+	name string
+	r    rune
+}{
+	{"comma", ','},
+	{"tab", '\t'},
+	{"pipe", '|'},
+	{"semicolon", ';'},
+}
+
+// DelimiterRune maps a delimiter name to its rune (0 = unknown/auto).
+func DelimiterRune(name string) rune {
+	for _, d := range delimiters {
+		if d.name == name {
+			return d.r
+		}
+	}
+	return 0
+}
+
+// DelimiterName maps a rune to its delimiter name (defaults to "comma").
+func DelimiterName(r rune) string {
+	for _, d := range delimiters {
+		if d.r == r {
+			return d.name
+		}
+	}
+	return "comma"
+}
+
+// DelimiterNames lists the selectable delimiter names (for the UI).
+func DelimiterNames() []string {
+	out := make([]string, len(delimiters))
+	for i, d := range delimiters {
+		out[i] = d.name
+	}
+	return out
+}
+
+// DetectDelimiter sniffs the first non-empty line and picks the delimiter with
+// the most occurrences (defaults to comma).
+func DetectDelimiter(data []byte) rune {
+	line := ""
+	for _, l := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(l) != "" {
+			line = l
+			break
+		}
+	}
+	best, bestN := ',', 0
+	for _, d := range delimiters {
+		if n := strings.Count(line, string(d.r)); n > bestN {
+			best, bestN = d.r, n
+		}
+	}
+	return best
+}
+
+// Parse reads a CSV or XLSX file. For CSV, comma is the delimiter; comma == 0
+// auto-detects it. For XLSX the delimiter is ignored.
+func Parse(filename string, data []byte, comma rune) (Parsed, error) {
 	switch strings.ToLower(filepath.Ext(filename)) {
 	case ".csv":
-		return parseCSV(filename, data)
+		if comma == 0 {
+			comma = DetectDelimiter(data)
+		}
+		return parseCSV(filename, data, comma)
 	case ".xlsx":
 		return parseXLSX(filename, data)
 	default:
@@ -33,14 +98,20 @@ func Parse(filename string, data []byte) (Parsed, error) {
 	}
 }
 
-func parseCSV(filename string, data []byte) (Parsed, error) {
+func parseCSV(filename string, data []byte, comma rune) (Parsed, error) {
 	r := csv.NewReader(bytes.NewReader(data))
+	r.Comma = comma
 	r.FieldsPerRecord = -1 // tolerate ragged rows
 	recs, err := r.ReadAll()
 	if err != nil {
 		return Parsed{}, fmt.Errorf("reading CSV: %w", err)
 	}
-	return fromRecords(filename, recs)
+	p, err := fromRecords(filename, recs)
+	if err != nil {
+		return Parsed{}, err
+	}
+	p.Delimiter = DelimiterName(comma)
+	return p, nil
 }
 
 func parseXLSX(filename string, data []byte) (Parsed, error) {

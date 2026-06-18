@@ -20,8 +20,9 @@ type Hold struct {
 }
 
 type heldItem struct {
-	parsed  Parsed
-	expires time.Time
+	filename string
+	data     []byte
+	expires  time.Time
 }
 
 // NewHold returns a Hold with the given entry TTL.
@@ -32,8 +33,8 @@ func NewHold(ttl time.Duration) *Hold {
 	return &Hold{items: map[string]heldItem{}, ttl: ttl, now: time.Now}
 }
 
-// Put stores a parsed upload and returns a token to retrieve it.
-func (h *Hold) Put(p Parsed) (string, error) {
+// Put stores raw uploaded bytes and returns a token to retrieve them.
+func (h *Hold) Put(filename string, data []byte) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -43,19 +44,19 @@ func (h *Hold) Put(p Parsed) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.gc()
-	h.items[token] = heldItem{parsed: p, expires: h.now().Add(h.ttl)}
+	h.items[token] = heldItem{filename: filename, data: data, expires: h.now().Add(h.ttl)}
 	return token, nil
 }
 
-// Get returns a held upload if present and unexpired.
-func (h *Hold) Get(token string) (Parsed, bool) {
+// Get returns a held upload's filename + raw bytes if present and unexpired.
+func (h *Hold) Get(token string) (string, []byte, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	it, ok := h.items[token]
 	if !ok || h.now().After(it.expires) {
-		return Parsed{}, false
+		return "", nil, false
 	}
-	return it.parsed, true
+	return it.filename, it.data, true
 }
 
 // Delete removes a held upload (after a successful import).

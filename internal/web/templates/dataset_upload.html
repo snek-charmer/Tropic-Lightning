@@ -41,13 +41,16 @@
   <div id="preview" class="card" style="display:none;">
     <form id="importForm" method="POST" action="/datasources/import">
       <input type="hidden" name="token" id="token">
-      <p>
+      <p style="display:flex; gap:1.5rem; flex-wrap:wrap; align-items:flex-end;">
         <label><strong>Dataset name</strong><br>
           <input type="text" name="name" id="name" placeholder="e.g. Hill AFB roster" style="width:20rem;">
         </label>
+        <label id="delimWrap" style="display:none;"><strong>Delimiter</strong><br>
+          <select name="delimiter" id="delimiter" onchange="reparse()" style="padding:.45rem; border:1px solid #ccc; border-radius:8px; font:inherit;"></select>
+        </label>
       </p>
       <p class="muted" id="meta"></p>
-      <p class="muted">Untick a column header to drop it before importing.</p>
+      <p class="muted">If columns look wrong, change the <strong>Delimiter</strong>. Untick a column header to drop it before importing.</p>
       <div class="wrap"><table id="tbl"></table></div>
       <p style="margin-top:1rem;">
         <button class="btn" type="submit">Add to application</button>
@@ -86,11 +89,44 @@
       } catch(e) { showError('upload failed: '+e); }
     }
 
+    // Re-parse the held upload with a different delimiter.
+    async function reparse(){
+      clearError();
+      var token = document.getElementById('token').value;
+      var delim = document.getElementById('delimiter').value;
+      var body = 'token=' + encodeURIComponent(token) + '&delimiter=' + encodeURIComponent(delim);
+      try {
+        var r = await fetch('/datasources/preview', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body: body });
+        var d = await r.json();
+        if (!r.ok) { showError(d.error || ('preview failed ('+r.status+')')); return; }
+        renderPreview(d);
+      } catch(e) { showError('preview failed: '+e); }
+    }
+
     function renderPreview(d){
       document.getElementById('token').value = d.token;
-      var base = (d.filename||'dataset').replace(/\.[^.]+$/, '');
-      document.getElementById('name').value = base;
+      if (!document.getElementById('name').value) {
+        document.getElementById('name').value = (d.filename||'dataset').replace(/\.[^.]+$/, '');
+      }
       document.getElementById('meta').textContent = d.filename + ' — ' + d.columns.length + ' columns, ' + d.total + ' rows (showing ' + d.rows.length + ').';
+
+      // Delimiter selector (CSV only; xlsx returns an empty delimiter).
+      var delimWrap = document.getElementById('delimWrap');
+      var delimSel = document.getElementById('delimiter');
+      if (d.delimiter && d.delimiterOptions) {
+        if (!delimSel.options.length) {
+          d.delimiterOptions.forEach(function(name){
+            var o = document.createElement('option'); o.value = name; o.textContent = name; delimSel.appendChild(o);
+          });
+        }
+        delimSel.value = d.delimiter;
+        delimWrap.style.display = '';
+        if (d.columns.length <= 1) {
+          document.getElementById('meta').textContent += '  ⚠ only one column detected — try a different delimiter.';
+        }
+      } else {
+        delimWrap.style.display = 'none';
+      }
 
       var tbl = document.getElementById('tbl');
       var thead = '<thead><tr>';

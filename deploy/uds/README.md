@@ -29,12 +29,12 @@ reconciles it:
 
 ```bash
 # 1) Build the app image and Zarf package (the bundle references ../zarf by path).
-docker build -t keycloak-portal:0.1.12 .
+docker build -t keycloak-portal:0.1.13 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 
 # 2) Create the bundle (app-only — no platform OCI pulls).
 uds create deploy/uds --confirm
-# -> uds-bundle-keycloak-portal-<arch>-0.1.12.tar.zst
+# -> uds-bundle-keycloak-portal-<arch>-0.1.13.tar.zst
 ```
 
 ## Deploy

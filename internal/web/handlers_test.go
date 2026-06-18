@@ -948,3 +948,49 @@ func TestOperatorBulkSave(t *testing.T) {
 		t.Errorf("unassigned bulk = %d, want 403", rec2.Code)
 	}
 }
+
+func TestUploadDelimiterReparse(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	// Upload a pipe-delimited CSV.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "piped.csv")
+	_, _ = fw.Write([]byte("a|b|c\n1|2|3\n"))
+	_ = mw.Close()
+	up := httptest.NewRequest(http.MethodPost, "/datasources/upload", &buf)
+	up.Header.Set("Authorization", "Bearer "+tok)
+	up.Header.Set("Content-Type", mw.FormDataContentType())
+	uprec := httptest.NewRecorder()
+	h.ServeHTTP(uprec, up)
+	if uprec.Code != http.StatusOK {
+		t.Fatalf("upload = %d", uprec.Code)
+	}
+	var prev struct {
+		Token     string   `json:"token"`
+		Columns   []string `json:"columns"`
+		Delimiter string   `json:"delimiter"`
+	}
+	_ = json.Unmarshal(uprec.Body.Bytes(), &prev)
+	if prev.Delimiter != "pipe" || len(prev.Columns) != 3 {
+		t.Fatalf("auto-detect: delim=%q cols=%d", prev.Delimiter, len(prev.Columns))
+	}
+
+	// Re-preview forcing comma -> 1 column.
+	form := url.Values{"token": {prev.Token}, "delimiter": {"comma"}}
+	pr := httptest.NewRequest(http.MethodPost, "/datasources/preview", strings.NewReader(form.Encode()))
+	pr.Header.Set("Authorization", "Bearer "+tok)
+	pr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	prrec := httptest.NewRecorder()
+	h.ServeHTTP(prrec, pr)
+	var prev2 struct {
+		Columns []string `json:"columns"`
+	}
+	_ = json.Unmarshal(prrec.Body.Bytes(), &prev2)
+	if len(prev2.Columns) != 1 {
+		t.Errorf("forced comma cols = %d, want 1", len(prev2.Columns))
+	}
+}
