@@ -20,6 +20,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
+	"github.com/defenseunicorns/keycloak-portal/internal/views"
 	"github.com/defenseunicorns/keycloak-portal/internal/weather"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
@@ -122,7 +123,15 @@ func run() error {
 	defer httpStore.Close()
 	httpService := httpsource.NewService(httpStore, datasetStore, slog.Default())
 
-	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService, weatherService, httpService)
+	// Per-user saved views (named filter + visualization) for datasets.
+	viewStore, err := views.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer viewStore.Close()
+	viewService := views.NewService(viewStore)
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService, weatherService, httpService, viewService)
 	if err != nil {
 		return err
 	}

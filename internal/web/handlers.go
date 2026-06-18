@@ -26,6 +26,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
+	"github.com/defenseunicorns/keycloak-portal/internal/views"
 	"github.com/defenseunicorns/keycloak-portal/internal/weather"
 )
 
@@ -50,11 +51,12 @@ type Server struct {
 	operators   *operators.Service
 	weather     *weather.Service
 	httpsource  *httpsource.Service
+	views       *views.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
 // weather and httpsrc may be nil (no live connectors configured).
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service, httpsrc *httpsource.Service) (*Server, error) {
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service, httpsrc *httpsource.Service, vw *views.Service) (*Server, error) {
 	// tmpl is captured by the partial func below; assigned after parsing so the
 	// shared layout can render a page's content block by name.
 	var tmpl *template.Template
@@ -74,7 +76,7 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 		return nil, err
 	}
 	tmpl = t
-	return &Server{auth: authn, cfg: cfg, templates: t, dataSources: ds, pilots: pl, datasets: dsets, operators: ops, weather: wx, httpsource: httpsrc}, nil
+	return &Server{auth: authn, cfg: cfg, templates: t, dataSources: ds, pilots: pl, datasets: dsets, operators: ops, weather: wx, httpsource: httpsrc, views: vw}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -150,6 +152,10 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /datasets/{collection}/view", authed(s.handleDatasetSetView))
 	// Manual refresh of a live connector backing this dataset (weather | http).
 	mux.Handle("POST /datasets/{collection}/refresh", authed(s.handleDatasetRefresh))
+	// Per-user saved views (named filter + visualization) for a dataset.
+	mux.Handle("POST /datasets/{collection}/views", authed(s.handleViewSave))
+	mux.Handle("POST /datasets/{collection}/views/{id}/delete", authed(s.handleViewDelete))
+	mux.Handle("POST /datasets/{collection}/views/{id}/default", authed(s.handleViewSetDefault))
 	mux.Handle("GET /missions", authed(s.handleMissions))
 	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
 	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
@@ -708,16 +714,39 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		s.forbidden(w, r)
 		return
 	}
-	name, cols, rows, err := s.datasets.View(r.Context(), collection)
+	ctx := r.Context()
+	owner := s.operatorName(claimsOf(r))
+	qry := r.URL.Query()
+	col := qry.Get("col")
+	val := qry.Get("val")
+	q := qry.Get("q")
+	vtype := qry.Get("vtype") // per-view visualization override
+	vgroup := qry.Get("vgroup")
+	activeView := qry.Get("view") // a saved view id, or "none", or ""
+	editMode := qry.Get("edit") == "1"
+
+	// Saved views (private to the user). When the dataset is opened "clean" — no
+	// filter/viz/view/edit params — auto-apply the user's default view so they
+	// don't have to re-filter every time.
+	var savedViews []views.View
+	if s.views != nil {
+		savedViews, _ = s.views.List(ctx, owner, collection)
+		clean := col == "" && val == "" && q == "" && vtype == "" && vgroup == "" && activeView == "" && !editMode
+		if clean {
+			if def, ok, _ := s.views.Default(ctx, owner, collection); ok {
+				http.Redirect(w, r, "/datasets/"+collection+"?"+viewQuery(def), http.StatusFound)
+				return
+			}
+		}
+	}
+
+	name, cols, rows, err := s.datasets.View(ctx, collection)
 	if err != nil {
 		http.Error(w, "failed to load dataset: "+err.Error(), http.StatusNotFound)
 		return
 	}
 
 	// Generic row filter: a column "contains" match and/or a global search.
-	col := r.URL.Query().Get("col")
-	val := r.URL.Query().Get("val")
-	q := r.URL.Query().Get("q")
 	filtered := rows
 	if col != "" && val != "" || q != "" {
 		filtered = filtered[:0:0]
@@ -733,13 +762,29 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		shown = shown[:pilotsDisplayLimit]
 	}
 
-	// Visualization config (table by default; a configurable status wheel). The
-	// wheel is computed over the filtered rows so it tracks the current view.
-	view := s.datasetView(r.Context(), collection)
+	// Effective visualization: a saved view's override (vtype/vgroup in the URL)
+	// wins; otherwise fall back to the dataset's own shared setting.
+	effType, effGroup := vtype, vgroup
+	if effType == "" {
+		dv := s.datasetView(ctx, collection)
+		effType, effGroup = dv.Type, dv.GroupBy
+	}
 	var segments []wheelSegment
 	var gradient template.CSS
-	if view.Type == "wheel" && view.GroupBy != "" {
-		segments, gradient = computeWheel(filtered, view.GroupBy)
+	if effType == "wheel" && effGroup != "" {
+		segments, gradient = computeWheel(filtered, effGroup)
+	}
+
+	// View models: an apply querystring + active flag for each saved view.
+	type savedViewVM struct {
+		ID, Name string
+		Default  bool
+		Active   bool
+		Query    string
+	}
+	vms := make([]savedViewVM, 0, len(savedViews))
+	for _, v := range savedViews {
+		vms = append(vms, savedViewVM{ID: v.ID, Name: v.Name, Default: v.Default, Active: v.ID == activeView, Query: viewQuery(v)})
 	}
 
 	s.render(w, r, "dataset_view.html", name, "datasources", map[string]any{
@@ -754,20 +799,134 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		"FilterVal":     val,
 		"FilterQuery":   q,
 		"FilterActive":  (col != "" && val != "") || q != "",
-		"EditMode":      r.URL.Query().Get("edit") == "1",
-		"BackQuery":     r.URL.RawQuery, // preserve filter+edit on edit actions
-		"Imported":      r.URL.Query().Get("imported"),
-		"Capped":        r.URL.Query().Get("capped"),
-		"Error":         r.URL.Query().Get("error"),
-		"ViewType":      view.Type,
-		"ViewGroupBy":   view.GroupBy,
+		"EditMode":      editMode,
+		"BackQuery":     r.URL.RawQuery, // preserve filter+view+edit on edit actions
+		"Imported":      qry.Get("imported"),
+		"Capped":        qry.Get("capped"),
+		"Error":         qry.Get("error"),
+		"ViewType":      effType,
+		"ViewGroupBy":   effGroup,
 		"WheelSegments": segments,
 		"WheelGradient": gradient,
 		"IsAdmin":       s.auth.IsAdmin(claimsOf(r)),
 		// wx_ (weather) and api_ (HTTP/JSON) datasets are backed by a live
 		// connector and can be re-pulled on demand.
 		"LiveConnector": strings.HasPrefix(collection, "wx_") || strings.HasPrefix(collection, "api_"),
+		"SavedViews":    vms,
+		"HasViews":      s.views != nil,
+		"ActiveView":    activeView,
 	})
+}
+
+// viewQuery encodes a saved view as the querystring that re-applies it.
+func viewQuery(v views.View) string {
+	q := url.Values{}
+	if v.FilterCol != "" {
+		q.Set("col", v.FilterCol)
+	}
+	if v.FilterVal != "" {
+		q.Set("val", v.FilterVal)
+	}
+	if v.Query != "" {
+		q.Set("q", v.Query)
+	}
+	if v.ViewType != "" {
+		q.Set("vtype", v.ViewType)
+	}
+	if v.GroupBy != "" {
+		q.Set("vgroup", v.GroupBy)
+	}
+	q.Set("view", v.ID)
+	return q.Encode()
+}
+
+// handleViewSave saves the current filter + visualization as a named private
+// view for the calling user, then opens it.
+func (s *Server) handleViewSave(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) {
+		s.forbidden(w, r)
+		return
+	}
+	if s.views == nil {
+		http.Redirect(w, r, "/datasets/"+collection, http.StatusSeeOther)
+		return
+	}
+	_ = r.ParseForm()
+	v := views.View{
+		Owner:      s.operatorName(claimsOf(r)),
+		Collection: collection,
+		Name:       r.PostFormValue("name"),
+		Default:    r.PostFormValue("default") == "on",
+		FilterCol:  r.PostFormValue("col"),
+		FilterVal:  r.PostFormValue("val"),
+		Query:      r.PostFormValue("q"),
+		ViewType:   r.PostFormValue("vtype"),
+		GroupBy:    r.PostFormValue("vgroup"),
+	}
+	saved, err := s.views.Save(r.Context(), v)
+	if err != nil {
+		// Return to the current filter with the error shown.
+		back := viewQueryFromForm(r)
+		http.Redirect(w, r, "/datasets/"+collection+"?"+back+"&error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/datasets/"+collection+"?"+viewQuery(saved), http.StatusSeeOther)
+}
+
+// handleViewDelete removes one of the caller's saved views.
+func (s *Server) handleViewDelete(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) || s.views == nil {
+		s.forbidden(w, r)
+		return
+	}
+	if err := s.views.Delete(r.Context(), s.operatorName(claimsOf(r)), r.PathValue("id")); err != nil && !errors.Is(err, views.ErrNotFound) {
+		http.Redirect(w, r, "/datasets/"+collection+"?view=none&error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/datasets/"+collection+"?view=none", http.StatusSeeOther)
+}
+
+// handleViewSetDefault sets (default=on) or clears (default=off) the caller's
+// default view for this dataset.
+func (s *Server) handleViewSetDefault(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) || s.views == nil {
+		s.forbidden(w, r)
+		return
+	}
+	_ = r.ParseForm()
+	owner := s.operatorName(claimsOf(r))
+	id := r.PathValue("id")
+	var err error
+	if r.PostFormValue("default") == "off" {
+		err = s.views.SetDefault(r.Context(), owner, collection, "")
+		id = "" // clearing -> open unfiltered
+	} else {
+		err = s.views.SetDefault(r.Context(), owner, collection, id)
+	}
+	if err != nil {
+		http.Redirect(w, r, "/datasets/"+collection+"?view=none&error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	if id == "" {
+		http.Redirect(w, r, "/datasets/"+collection+"?view=none", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/datasets/"+collection+"?view="+url.QueryEscape(id), http.StatusSeeOther)
+}
+
+// viewQueryFromForm rebuilds the filter+viz querystring from a posted form (used
+// to return to the same view after an error).
+func viewQueryFromForm(r *http.Request) string {
+	q := url.Values{}
+	for _, k := range []string{"col", "val", "q", "vtype", "vgroup"} {
+		if v := r.PostFormValue(k); v != "" {
+			q.Set(k, v)
+		}
+	}
+	return q.Encode()
 }
 
 // datasetView returns the dataset's visualization config (defaulting to table).
