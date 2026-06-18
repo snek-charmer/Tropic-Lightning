@@ -17,6 +17,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/weather"
@@ -112,7 +113,16 @@ func run() error {
 	weatherService := weather.NewService(weatherStore, datasetStore, slog.Default())
 	weatherService.SetBaseURL(cfg.WeatherAPIURL) // no-op when unset (public API)
 
-	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService, weatherService)
+	// Generic HTTP/JSON connector. Connector configs live in peat; the poller
+	// writes a fresh snapshot into each connector's dataset when connected.
+	httpStore, err := httpsource.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer httpStore.Close()
+	httpService := httpsource.NewService(httpStore, datasetStore, slog.Default())
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService, weatherService, httpService)
 	if err != nil {
 		return err
 	}
@@ -131,6 +141,10 @@ func run() error {
 	// quietly while the node is offline; resumes on reconnect).
 	if cfg.WeatherPollInterval > 0 {
 		go pollWeather(shutdownCtx, weatherService, cfg.WeatherPollInterval)
+	}
+	// Background HTTP/JSON connector poller.
+	if cfg.HTTPPollInterval > 0 {
+		go pollHTTP(shutdownCtx, httpService, cfg.HTTPPollInterval)
 	}
 
 	go func() {
@@ -166,6 +180,27 @@ func pollWeather(ctx context.Context, svc *weather.Service, every time.Duration)
 				slog.Warn("weather poll", "refreshed", n, "err", err)
 			} else if n > 0 {
 				slog.Info("weather poll", "refreshed", n)
+			}
+		}
+	}
+}
+
+// pollHTTP refreshes every HTTP/JSON connector on each tick until ctx is done.
+func pollHTTP(ctx context.Context, svc *httpsource.Service, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pollCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			n, err := svc.Poll(pollCtx)
+			cancel()
+			if err != nil {
+				slog.Warn("http poll", "refreshed", n, "err", err)
+			} else if n > 0 {
+				slog.Info("http poll", "refreshed", n)
 			}
 		}
 	}

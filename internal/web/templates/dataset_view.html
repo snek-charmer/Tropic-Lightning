@@ -103,6 +103,16 @@
     </form>
   </div>
 
+  {{if .LiveConnector}}
+  <div class="card">
+    <h2 style="margin-top:0;">Live source</h2>
+    <p class="muted" style="margin:0 0 .6rem;">This dataset is backed by a live connector. It refreshes in the background when the node is connected; pull the latest now below. A refresh replaces the snapshot, so manual row edits will be overwritten.</p>
+    <form method="POST" action="/datasets/{{$coll}}/refresh?{{$bq}}" style="display:inline;">
+      <button type="submit" style="background:#1c9d52;color:#fff;border:none;padding:.45rem 1rem;border-radius:8px;font:inherit;font-weight:600;cursor:pointer;">↻ Refresh now</button>
+    </form>
+  </div>
+  {{end}}
+
   <div class="card">
     <h2 style="margin-top:0;">Edit</h2>
     {{if .Error}}<p class="err">{{.Error}}</p>{{end}}

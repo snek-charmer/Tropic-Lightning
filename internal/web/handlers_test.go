@@ -15,6 +15,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/weather"
@@ -28,7 +29,7 @@ func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	pl := pilots.NewService(pilots.NewMemoryStore(), ds, nil)
 	dsets := dataset.NewService(dataset.NewMemoryStore(), ds, nil)
 	ops := operators.NewService(operators.NewMemoryStore())
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets, ops, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets, ops, nil, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -552,7 +553,7 @@ func opServer(t *testing.T, kc *authtest.Keycloak, pstore *pilots.MemoryStore, o
 	t.Helper()
 	ds := datasource.NewService(datasource.NewMemoryStore())
 	pl := pilots.NewService(pstore, ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -799,7 +800,7 @@ func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
 		pilots.NewService(pilots.NewMemoryStore(), ds, nil),
-		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil)
+		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -833,7 +834,7 @@ func TestOperatorCanEditAssignedDataset(t *testing.T) {
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -885,7 +886,7 @@ func TestOperatorUpdatesExistingRow(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil)
 	h := srv.Routes()
 
 	tok := kc.SignToken(t, map[string]any{"preferred_username": "s4", "realm_access": map[string]any{"roles": []string{"user"}}})
@@ -920,7 +921,7 @@ func TestOperatorBulkSave(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil)
 	h := srv.Routes()
 
 	body := `{"rows":[{"id":"r000001","fields":{"name":"Alice","status":"grounded"}},{"id":"","fields":{"name":"Bob","status":"ok"}}],"deletes":[]}`
@@ -1012,7 +1013,7 @@ func TestDatasetStatusWheel(t *testing.T) {
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1063,7 +1064,7 @@ func TestWeatherConnectorCreateFlow(t *testing.T) {
 	wx.SetBaseURL(api.URL)
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, wx)
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, wx, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1095,5 +1096,72 @@ func TestWeatherConnectorCreateFlow(t *testing.T) {
 	h.ServeHTTP(vrr, vr)
 	if !strings.Contains(vrr.Body.String(), "Hill AFB") {
 		t.Error("weather dataset view should list the configured location")
+	}
+}
+
+func TestHTTPSourceCreateAndRefresh(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+
+	calls := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 0 {
+			_, _ = w.Write([]byte(`{"data":[{"id":"1","name":"alpha"},{"id":"2","name":"bravo"}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"data":[{"id":"1","name":"alpha-updated"}]}`))
+		}
+		calls++
+	}))
+	defer api.Close()
+
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	hs := httpsource.NewService(httpsource.NewMemoryStore(), dstore, nil)
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, hs)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	form := url.Values{"name": {"Feed"}, "url": {api.URL}, "record_path": {"data"}, "auth_type": {"none"}}
+	cr := httptest.NewRequest(http.MethodPost, "/datasources/http", strings.NewReader(form.Encode()))
+	cr.Header.Set("Authorization", "Bearer "+tok)
+	cr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	crr := httptest.NewRecorder()
+	h.ServeHTTP(crr, cr)
+	if crr.Code != http.StatusSeeOther || crr.Header().Get("Location") != "/datasets/api_feed" {
+		t.Fatalf("create = %d -> %q (%s)", crr.Code, crr.Header().Get("Location"), crr.Body.String())
+	}
+	if rows, _ := dstore.ListRows(ctx, "api_feed"); len(rows) != 2 {
+		t.Fatalf("rows after create = %d", len(rows))
+	}
+
+	// The view shows the live-source refresh control.
+	vr := httptest.NewRequest(http.MethodGet, "/datasets/api_feed", nil)
+	vr.Header.Set("Authorization", "Bearer "+tok)
+	vrr := httptest.NewRecorder()
+	h.ServeHTTP(vrr, vr)
+	if !strings.Contains(vrr.Body.String(), "Refresh now") {
+		t.Error("live dataset view should offer a Refresh now button")
+	}
+
+	// Refresh re-pulls: snapshot shrinks to one row.
+	rr := httptest.NewRequest(http.MethodPost, "/datasets/api_feed/refresh", nil)
+	rr.Header.Set("Authorization", "Bearer "+tok)
+	rrr := httptest.NewRecorder()
+	h.ServeHTTP(rrr, rr)
+	if rrr.Code != http.StatusSeeOther {
+		t.Fatalf("refresh = %d", rrr.Code)
+	}
+	rows, _ := dstore.ListRows(ctx, "api_feed")
+	if len(rows) != 1 || rows[0].Fields["name"] != "alpha-updated" {
+		t.Errorf("rows after refresh = %v", rows)
 	}
 }
