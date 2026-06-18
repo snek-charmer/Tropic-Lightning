@@ -34,6 +34,10 @@ type Authenticator struct {
 	// adminGroup is a Keycloak group whose members are treated as admins, in
 	// addition to holders of the "admin" realm role. Empty disables group admin.
 	adminGroup string
+
+	// cookieSecure mirrors config.CookieSecure so refreshed session cookies are
+	// written with the same attributes as the login flow.
+	cookieSecure bool
 }
 
 // providerClaims captures the optional end_session_endpoint advertised in the
@@ -51,6 +55,7 @@ func NewAuthenticator(ctx context.Context, cfg *config.Config) (*Authenticator, 
 	a := &Authenticator{
 		postLogoutRedirectURL: cfg.PostLogoutRedirectURL,
 		adminGroup:            cfg.AdminGroup,
+		cookieSecure:          cfg.CookieSecure,
 	}
 
 	if cfg.KeycloakInternalURL != "" {
@@ -122,6 +127,12 @@ func (a *Authenticator) AuthCodeURL(state, nonce string) string {
 // Exchange trades an authorization code for a token set.
 func (a *Authenticator) Exchange(ctx context.Context, code string) (*oauth2.Token, error) {
 	return a.oauth2.Exchange(ctx, code)
+}
+
+// Refresh exchanges a refresh token for a new token set (silent re-auth). The
+// back-channel token endpoint is used (in-cluster when configured).
+func (a *Authenticator) Refresh(ctx context.Context, refreshToken string) (*oauth2.Token, error) {
+	return a.oauth2.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken}).Token()
 }
 
 // VerifyIDToken validates the raw ID token's signature, issuer, audience, and

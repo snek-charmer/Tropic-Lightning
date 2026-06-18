@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
@@ -151,8 +152,10 @@ func TestAuthenticateMissingTokenHTMLRedirects(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/auth/login" {
-		t.Errorf("location = %q, want /auth/login", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/auth/login") {
+		t.Errorf("location = %q, want /auth/login...", loc)
+	} else if !strings.Contains(loc, "return_to=%2Fdashboard") {
+		t.Errorf("location = %q, want return_to=/dashboard", loc)
 	}
 }
 
@@ -276,5 +279,59 @@ func TestRequireAdminViaGroup(t *testing.T) {
 	// Neither -> forbidden.
 	if code := call(map[string]any{"preferred_username": "n", "groups": []string{"/UDS Core/Viewer"}}); code != http.StatusForbidden {
 		t.Errorf("non-admin: status = %d, want 403", code)
+	}
+}
+
+func TestAuthenticateSilentRefresh(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	authn := kc.Authenticator(t)
+
+	// An access token that is already expired (verification will fail).
+	expired := kc.SignToken(t, map[string]any{
+		"preferred_username": "s1",
+		"exp":                time.Now().Add(-time.Minute).Unix(),
+	})
+	// The fake token endpoint returns a fresh, valid access token on refresh.
+	kc.AccessClaims["preferred_username"] = "s1"
+
+	req := httptest.NewRequest(http.MethodGet, "/missions", nil)
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: expired})
+	req.AddCookie(&http.Cookie{Name: auth.RefreshTokenCookie, Value: "a-refresh-token"})
+	rec := httptest.NewRecorder()
+
+	authn.Authenticate(okHandler()).ServeHTTP(rec, req)
+
+	// Request proceeds (no bounce to login) because the session was refreshed.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (expected silent refresh)", rec.Code)
+	}
+	if rec.Body.String() != "s1" {
+		t.Errorf("body = %q, want s1", rec.Body.String())
+	}
+	// A fresh access-token cookie was written.
+	var refreshed bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.AccessTokenCookie && c.Value != "" && c.Value != expired {
+			refreshed = true
+		}
+	}
+	if !refreshed {
+		t.Error("expected a new access_token cookie after refresh")
+	}
+}
+
+func TestAuthenticateNoRefreshTokenDenies(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	authn := kc.Authenticator(t)
+
+	expired := kc.SignToken(t, map[string]any{"exp": time.Now().Add(-time.Minute).Unix()})
+	req := httptest.NewRequest(http.MethodGet, "/api/me", nil) // no refresh cookie
+	req.Header.Set("Authorization", "Bearer "+expired)
+	rec := httptest.NewRecorder()
+	authn.Authenticate(okHandler()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (no refresh token)", rec.Code)
 	}
 }
