@@ -24,7 +24,7 @@
   <div class="card">
     <h1>Welcome, {{.Username}}</h1>
     {{if .Email}}<p class="muted">{{.Email}}</p>{{end}}
-    {{if .IsAdmin}}<p class="admin">★ You hold the <strong>admin</strong> realm role.</p>{{end}}
+    {{if .IsAdmin}}<p class="admin">★ You have <strong>admin</strong> access.</p>{{end}}
     <form method="POST" action="/auth/logout"><button class="btn" type="submit">Sign out</button></form>
   </div>
 
@@ -79,6 +79,15 @@
       {{range .RealmRoles}}<span class="pill">{{.}}</span>{{end}}
     {{else}}
       <p class="muted">No realm roles assigned.</p>
+    {{end}}
+  </div>
+
+  <div class="card">
+    <h2>Groups</h2>
+    {{if .Groups}}
+      {{range .Groups}}<span class="pill">{{.}}</span>{{end}}
+    {{else}}
+      <p class="muted">No groups.</p>
     {{end}}
   </div>
 

@@ -18,6 +18,7 @@ data:
   {{- end }}
   OIDC_SCOPES: {{ .Values.config.scopes | quote }}
   COOKIE_SECURE: {{ .Values.config.cookieSecure | quote }}
+  ADMIN_GROUP: {{ .Values.config.adminGroup | quote }}
   PEAT_NODE_ADDR: {{ .Values.config.peatNodeAddr | quote }}
   PEAT_COLLECTION: {{ .Values.config.peatCollection | quote }}
   PEAT_TLS: {{ .Values.config.peatTls | quote }}

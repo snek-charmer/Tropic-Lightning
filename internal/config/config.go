@@ -34,6 +34,11 @@ type Config struct {
 	// for local HTTP development.
 	CookieSecure bool
 
+	// AdminGroup is a Keycloak group whose members are treated as admins (in
+	// addition to anyone holding the "admin" realm role). Matches the token's
+	// "groups" claim. Defaults to the UDS Core admin group.
+	AdminGroup string
+
 	// PeatNodeAddr is the gRPC target of the local peat sidecar node that backs
 	// data-source storage, e.g. "localhost:50051" or
 	// "peat-node-peat-node.peat-system.svc:50051". peat owns persistence,
@@ -59,6 +64,7 @@ func Load() (*Config, error) {
 		PostLogoutRedirectURL: envOr("OIDC_POST_LOGOUT_REDIRECT_URL", "http://localhost:3000/"),
 		Scopes:                splitScopes(envOr("OIDC_SCOPES", "openid profile email roles")),
 		CookieSecure:          envOr("COOKIE_SECURE", "false") == "true",
+		AdminGroup:            envOr("ADMIN_GROUP", "/UDS Core/Admin"),
 		PeatNodeAddr:          os.Getenv("PEAT_NODE_ADDR"),
 		PeatCollection:        envOr("PEAT_COLLECTION", "data_sources"),
 		PeatTLS:               envOr("PEAT_TLS", "false") == "true",

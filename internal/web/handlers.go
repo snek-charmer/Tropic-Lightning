@@ -63,12 +63,12 @@ func (s *Server) Routes() http.Handler {
 	// dashboard status bubble and its live polling.
 	mux.Handle("GET /api/peat/status", s.auth.Authenticate(http.HandlerFunc(s.handlePeatStatus)))
 
-	// Example role-guarded endpoint: requires the "admin" realm role.
-	adminOnly := s.auth.RequireRealmRole("admin")
+	// Admin = "admin" realm role OR membership in the configured admin group.
+	adminOnly := s.auth.RequireAdmin()
 	mux.Handle("GET /api/admin", s.auth.Authenticate(adminOnly(http.HandlerFunc(s.handleAdmin))))
 
 	// Data sources: admin-only. admin wraps a handler with Authenticate + the
-	// admin realm-role guard.
+	// admin guard.
 	admin := func(h http.HandlerFunc) http.Handler {
 		return s.auth.Authenticate(adminOnly(h))
 	}
@@ -204,8 +204,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Username":      firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
 		"Email":         claims.Email,
 		"RealmRoles":    claims.AllRealmRoles(),
+		"Groups":        claims.AllGroups(),
 		"ClientRoles":   clientRoles,
-		"IsAdmin":       claims.HasRealmRole("admin"),
+		"IsAdmin":       s.auth.IsAdmin(claims),
 		"PeatConnected": connected,
 		"Peat":          peat,
 	})

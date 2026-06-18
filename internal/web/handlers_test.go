@@ -463,3 +463,22 @@ func TestPeatStatusRequiresAuth(t *testing.T) {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
 }
+
+func TestDataSourcesAccessibleViaAdminGroup(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	// User has the admin GROUP but no admin realm role.
+	token := kc.SignToken(t, map[string]any{
+		"preferred_username": "alice",
+		"groups":             []string{"/UDS Core/Admin"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/datasources", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("group-admin /datasources status = %d, want 200", rec.Code)
+	}
+}

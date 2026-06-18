@@ -38,6 +38,9 @@ config:
   cookieSecure: true
   # Container listen address. Keep in sync with service.targetPort below.
   listenAddr: ":3000"
+  # Keycloak group whose members get admin (in addition to the "admin" realm
+  # role). Matches the token's "groups" claim (full path).
+  adminGroup: "/UDS Core/Admin"
   # peat node gRPC endpoint backing data-source storage. peat owns persistence,
   # disconnected operation, and CRDT mesh sync. Default targets a sidecar/node
   # in the peat-system namespace.

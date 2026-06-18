@@ -99,6 +99,7 @@ func (k *Keycloak) Config() *config.Config {
 		PostLogoutRedirectURL: "http://localhost/",
 		Scopes:                []string{"openid", "profile", "email", "roles"},
 		CookieSecure:          false,
+		AdminGroup:            "/UDS Core/Admin",
 	}
 }
 

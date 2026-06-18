@@ -28,6 +28,10 @@ type Authenticator struct {
 
 	endSessionEndpoint    string
 	postLogoutRedirectURL string
+
+	// adminGroup is a Keycloak group whose members are treated as admins, in
+	// addition to holders of the "admin" realm role. Empty disables group admin.
+	adminGroup string
 }
 
 // providerClaims captures the optional end_session_endpoint advertised in the
@@ -62,6 +66,7 @@ func NewAuthenticator(ctx context.Context, cfg *config.Config) (*Authenticator, 
 		accessTokenVerifier:   provider.Verifier(&oidc.Config{SkipClientIDCheck: true}),
 		endSessionEndpoint:    pc.EndSessionEndpoint,
 		postLogoutRedirectURL: cfg.PostLogoutRedirectURL,
+		adminGroup:            cfg.AdminGroup,
 	}, nil
 }
 

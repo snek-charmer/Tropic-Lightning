@@ -250,3 +250,31 @@ func TestLogoutURL(t *testing.T) {
 		t.Errorf("post_logout_redirect_uri = %q", q.Get("post_logout_redirect_uri"))
 	}
 }
+
+func TestRequireAdminViaGroup(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	authn := kc.Authenticator(t)
+
+	guard := authn.RequireAdmin()
+	call := func(claims map[string]any) int {
+		req := httptest.NewRequest(http.MethodGet, "/api/admin", nil)
+		req.Header.Set("Authorization", "Bearer "+kc.SignToken(t, claims))
+		rec := httptest.NewRecorder()
+		authn.Authenticate(guard(okHandler())).ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Admin via group only (no realm role).
+	if code := call(map[string]any{"preferred_username": "g", "groups": []string{"/UDS Core/Admin"}}); code != http.StatusOK {
+		t.Errorf("group admin: status = %d, want 200", code)
+	}
+	// Admin via realm role only.
+	if code := call(map[string]any{"preferred_username": "r", "realm_access": map[string]any{"roles": []string{"admin"}}}); code != http.StatusOK {
+		t.Errorf("role admin: status = %d, want 200", code)
+	}
+	// Neither -> forbidden.
+	if code := call(map[string]any{"preferred_username": "n", "groups": []string{"/UDS Core/Viewer"}}); code != http.StatusForbidden {
+		t.Errorf("non-admin: status = %d, want 403", code)
+	}
+}

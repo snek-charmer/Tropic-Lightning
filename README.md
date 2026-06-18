@@ -31,8 +31,8 @@ present (API clients), otherwise from the session cookie (browser navigation).
 | POST   | `/auth/logout`   | public (clears session + SSO logout) |
 | GET    | `/dashboard`     | any authenticated user               |
 | GET    | `/api/me`        | any authenticated user (JSON claims) |
-| GET    | `/api/admin`     | requires `admin` realm role (JSON)   |
-| GET    | `/datasources`   | `admin` realm role (HTML page)       |
+| GET    | `/api/admin`     | admin (realm role `admin` or admin group) |
+| GET    | `/datasources`   | admin (realm role or admin group), HTML |
 | POST   | `/datasources`   | `admin` (HTML form create)           |
 | POST   | `/datasources/{id}/delete` | `admin` (HTML form delete) |
 | GET    | `/api/datasources` | `admin` (JSON list)                |
@@ -88,6 +88,7 @@ set -a && source .env && set +a
 | `OIDC_SCOPES`                   | no       | Default `openid profile email roles`          |
 | `LISTEN_ADDR`                   | no       | Default `:3000`                               |
 | `COOKIE_SECURE`                 | no       | Set `true` behind HTTPS in production         |
+| `ADMIN_GROUP`                   | no       | Keycloak group granting admin (default `/UDS Core/Admin`) |
 | `PEAT_NODE_ADDR`                | yes      | peat node gRPC endpoint (e.g. `localhost:50051`) |
 | `PEAT_COLLECTION`               | no       | peat document collection (default `data_sources`) |
 | `PEAT_TLS`                      | no       | Dial the peat node over TLS (default `false`) |

@@ -34,11 +34,25 @@ type Claims struct {
 	ResourceAccess map[string]struct {
 		Roles []string `json:"roles"`
 	} `json:"resource_access"`
+
+	// Groups holds Keycloak group memberships (from a group-membership protocol
+	// mapper). With full-path mapping these look like "/UDS Core/Admin".
+	Groups []string `json:"groups"`
 }
 
 // HasRealmRole reports whether the user holds the given realm-level role.
 func (c *Claims) HasRealmRole(role string) bool {
 	return contains(c.RealmAccess.Roles, role)
+}
+
+// HasGroup reports whether the user is a member of the given Keycloak group.
+func (c *Claims) HasGroup(group string) bool {
+	return contains(c.Groups, group)
+}
+
+// AllGroups returns the user's group memberships (handy for templates/JSON).
+func (c *Claims) AllGroups() []string {
+	return c.Groups
 }
 
 // HasClientRole reports whether the user holds the given role on a specific
@@ -87,6 +101,33 @@ func (a *Authenticator) RequireRealmRole(role string) func(http.Handler) http.Ha
 			claims, ok := ClaimsFromContext(r.Context())
 			if !ok || !claims.HasRealmRole(role) {
 				a.deny(w, r, http.StatusForbidden, "missing required realm role: "+role)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// IsAdmin reports whether the claims grant admin: either the "admin" realm role
+// or membership in the configured admin group (e.g. "/UDS Core/Admin").
+func (a *Authenticator) IsAdmin(c *Claims) bool {
+	if c == nil {
+		return false
+	}
+	if c.HasRealmRole("admin") {
+		return true
+	}
+	return a.adminGroup != "" && c.HasGroup(a.adminGroup)
+}
+
+// RequireAdmin guards a handler so only admins (admin realm role OR admin group)
+// may proceed. It must run inside Authenticate.
+func (a *Authenticator) RequireAdmin() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := ClaimsFromContext(r.Context())
+			if !ok || !a.IsAdmin(claims) {
+				a.deny(w, r, http.StatusForbidden, "admin access required (admin realm role or group)")
 				return
 			}
 			next.ServeHTTP(w, r)

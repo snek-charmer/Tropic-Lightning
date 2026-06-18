@@ -46,6 +46,18 @@ spec:
           - {{ . | quote }}
           {{- end }}
       {{- end }}
+      # Emit a "groups" claim (full paths, e.g. /UDS Core/Admin) in the access &
+      # ID tokens so the app can gate admin access by group membership.
+      protocolMappers:
+        - name: groups
+          protocol: openid-connect
+          protocolMapper: oidc-group-membership-mapper
+          config:
+            claim.name: "groups"
+            full.path: "true"
+            access.token.claim: "true"
+            id.token.claim: "true"
+            userinfo.token.claim: "true"
       # UDS Operator creates the Keycloak client and writes the generated secret
       # into this Kubernetes Secret. The Deployment reads OIDC_CLIENT_SECRET from
       # it (see _helpers.tpl). pod-reload restarts pods when the secret rotates.
