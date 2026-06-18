@@ -18,12 +18,12 @@
   </div>
   <span class="spacer"></span>
   {{if .LiveConnector}}
-  <form method="POST" action="/datasets/{{$coll}}/refresh?{{$bq}}" style="display:inline;"><button class="btn go sm" type="submit">↻ Refresh now</button></form>
+  <form method="POST" action="/datasets/{{$coll}}/refresh?{{safeurl $bq}}" style="display:inline;"><button class="btn go sm" type="submit">↻ Refresh now</button></form>
   {{end}}
   {{if $edit}}
-    <a class="btn sm" href="/datasets/{{$coll}}{{if $fq}}?{{slice $fq 1}}{{end}}">✓ Done editing</a>
+    <a class="btn sm" href="/datasets/{{$coll}}{{if $fq}}?{{safeurl (slice $fq 1)}}{{end}}">✓ Done editing</a>
   {{else}}
-    <a class="btn ghost sm" href="/datasets/{{$coll}}?edit=1{{$fq}}">✎ Edit rows</a>
+    <a class="btn ghost sm" href="/datasets/{{$coll}}?edit=1{{safeurl $fq}}">✎ Edit rows</a>
   {{end}}
 </div>
 
@@ -35,7 +35,7 @@
   <div class="toolbar" style="gap:.5rem;">
     <strong style="font-size:.9rem;">Saved views</strong>
     {{range .SavedViews}}
-      <a class="btn sm {{if not .Active}}subtle{{end}}" href="/datasets/{{$coll}}?{{.Query}}">{{if .Default}}★ {{end}}{{.Name}}</a>
+      <a class="btn sm {{if not .Active}}subtle{{end}}" href="/datasets/{{$coll}}?{{safeurl .Query}}">{{if .Default}}★ {{end}}{{.Name}}</a>
     {{end}}
     {{if .SavedViews}}<a class="btn sm subtle" href="/datasets/{{$coll}}?view=none">All rows</a>{{end}}
     <span class="spacer"></span>
@@ -123,7 +123,7 @@
 
 <details class="card tight">
   <summary style="cursor:pointer; font-weight:600;">Visualization <span class="muted" style="font-weight:400;">— currently {{if eq .ViewType "wheel"}}status wheel{{else}}table{{end}}</span></summary>
-  <form method="POST" action="/datasets/{{$coll}}/view?{{$bq}}" class="inline-fields" style="margin-top:1rem;">
+  <form method="POST" action="/datasets/{{$coll}}/view?{{safeurl $bq}}" class="inline-fields" style="margin-top:1rem;">
     <div class="field"><label>View as</label>
       <select name="type" style="width:auto;"><option value="table" {{if ne .ViewType "wheel"}}selected{{end}}>Table</option><option value="wheel" {{if eq .ViewType "wheel"}}selected{{end}}>Status wheel</option></select>
     </div>
@@ -137,7 +137,7 @@
 <div class="card">
   {{if $edit}}
   <div class="toolbar" style="margin-bottom:.75rem;">
-    <form method="POST" action="/datasets/{{$coll}}/columns/add?{{$bq}}" style="display:inline-flex; gap:.4rem;">
+    <form method="POST" action="/datasets/{{$coll}}/columns/add?{{safeurl $bq}}" style="display:inline-flex; gap:.4rem;">
       <input type="text" name="name" placeholder="new column name" style="width:12rem;">
       <button class="btn subtle sm" type="submit">+ Column</button>
     </form>
@@ -155,7 +155,7 @@
         <tr>
           {{range .Columns}}
           <th>{{.}}
-            {{if $edit}}<form method="POST" action="/datasets/{{$coll}}/columns/delete?{{$bq}}" style="display:inline;" onsubmit="return confirm('Delete column {{.}}? This removes its values.');"><input type="hidden" name="name" value="{{.}}"><button type="submit" title="delete column" style="border:none;background:none;color:var(--red);cursor:pointer;font-weight:700;">×</button></form>{{end}}
+            {{if $edit}}<form method="POST" action="/datasets/{{$coll}}/columns/delete?{{safeurl $bq}}" style="display:inline;" onsubmit="return confirm('Delete column {{.}}? This removes its values.');"><input type="hidden" name="name" value="{{.}}"><button type="submit" title="delete column" style="border:none;background:none;color:var(--red);cursor:pointer;font-weight:700;">×</button></form>{{end}}
           </th>
           {{end}}
           <th></th>
@@ -170,7 +170,7 @@
             <td><button class="btn danger sm" type="button" onclick="removeRow(this)">Remove</button></td>
           {{else}}
             {{range $cols}}<td>{{index $row.Fields .}}</td>{{end}}
-            <td style="text-align:right;"><form method="POST" action="/datasets/{{$coll}}/rows/delete?{{$bq}}" style="display:inline;" onsubmit="return confirm('Delete this row?');"><input type="hidden" name="id" value="{{$row.ID}}"><button class="btn danger sm" type="submit">Delete</button></form></td>
+            <td style="text-align:right;"><form method="POST" action="/datasets/{{$coll}}/rows/delete?{{safeurl $bq}}" style="display:inline;" onsubmit="return confirm('Delete this row?');"><input type="hidden" name="id" value="{{$row.ID}}"><button class="btn danger sm" type="submit">Delete</button></form></td>
           {{end}}
         </tr>
         {{end}}

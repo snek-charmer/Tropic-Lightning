@@ -2,7 +2,7 @@
 # substituted from zarf.yaml variables at `zarf package deploy` time.
 image:
   repository: keycloak-portal
-  tag: "0.1.18"
+  tag: "0.1.19"
   # Zarf serves the bundled image from the in-cluster registry.
   pullPolicy: IfNotPresent
 

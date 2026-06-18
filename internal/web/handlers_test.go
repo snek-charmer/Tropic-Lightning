@@ -1266,3 +1266,57 @@ func mustViewID(t *testing.T, applied string) string {
 	}
 	return id
 }
+
+// TestSavedViewsSwitch guards against the querystring being percent-encoded into
+// a single broken parameter (which made every saved-view chip load the same
+// unfiltered data — you couldn't switch between views).
+func TestSavedViewsSwitch(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_x", "X", []string{"name", "status"})
+	_ = dstore.PutRow(ctx, "ds_x", "r1", map[string]string{"name": "A", "status": "ready"})
+	_ = dstore.PutRow(ctx, "ds_x", "r2", map[string]string{"name": "B", "status": "down"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	vw := views.NewService(views.NewMemoryStore())
+	down, _ := vw.Save(ctx, views.View{Owner: "alice", Collection: "ds_x", Name: "Down", FilterCol: "status", FilterVal: "down"})
+	ready, _ := vw.Save(ctx, views.View{Owner: "alice", Collection: "ds_x", Name: "Ready", FilterCol: "status", FilterVal: "ready"})
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil, vw)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+	get := func(target string) (int, string) {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+
+	// The chip hrefs must carry real query params, not percent-encoded ones.
+	_, page := get("/datasets/ds_x?view=none")
+	if strings.Contains(page, "col%3d") || strings.Contains(page, "%26val") {
+		t.Fatal("saved-view links are percent-encoded into a single broken param")
+	}
+
+	// Applying each view returns its own filtered rows.
+	applyQ := func(v views.View) string {
+		return "/datasets/ds_x?col=" + v.FilterCol + "&val=" + v.FilterVal + "&view=" + v.ID
+	}
+	_, d := get(applyQ(down))
+	if !strings.Contains(d, ">B<") || strings.Contains(d, ">A<") {
+		t.Error("Down view should show only B")
+	}
+	_, r := get(applyQ(ready))
+	if !strings.Contains(r, ">A<") || strings.Contains(r, ">B<") {
+		t.Error("Ready view should show only A")
+	}
+}

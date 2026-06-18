@@ -63,6 +63,10 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 	funcs := template.FuncMap{
 		"hasPrefix":  strings.HasPrefix,
 		"trimPrefix": strings.TrimPrefix,
+		// safeurl marks an already-encoded querystring as a trusted URL so
+		// html/template normalizes it (preserving & and =) instead of
+		// percent-encoding the whole thing into a single broken parameter.
+		"safeurl": func(s string) template.URL { return template.URL(s) },
 		"partial": func(name string, data any) (template.HTML, error) {
 			var buf bytes.Buffer
 			if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
