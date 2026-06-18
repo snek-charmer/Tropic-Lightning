@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -40,34 +42,75 @@ type providerClaims struct {
 	EndSessionEndpoint string `json:"end_session_endpoint"`
 }
 
-// NewAuthenticator performs OIDC discovery against the configured Keycloak realm
-// and builds the verifiers and OAuth2 client used by the rest of the app.
+// NewAuthenticator builds the verifiers and OAuth2 client used by the rest of
+// the app. With KeycloakInternalURL set, back-channel calls (token exchange,
+// JWKS) target the in-cluster Keycloak while the browser uses the public issuer
+// and tokens are still validated against it; otherwise it performs standard OIDC
+// discovery against the issuer.
 func NewAuthenticator(ctx context.Context, cfg *config.Config) (*Authenticator, error) {
+	a := &Authenticator{
+		postLogoutRedirectURL: cfg.PostLogoutRedirectURL,
+		adminGroup:            cfg.AdminGroup,
+	}
+
+	if cfg.KeycloakInternalURL != "" {
+		return newInternalBackchannelAuthenticator(ctx, cfg, a)
+	}
+
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery for issuer %q: %w", cfg.Issuer, err)
 	}
-
 	var pc providerClaims
 	if err := provider.Claims(&pc); err != nil {
 		return nil, fmt.Errorf("parsing provider metadata: %w", err)
 	}
 
-	return &Authenticator{
-		provider: provider,
-		oauth2: oauth2.Config{
-			ClientID:     cfg.ClientID,
-			ClientSecret: cfg.ClientSecret,
-			RedirectURL:  cfg.RedirectURL,
-			Endpoint:     provider.Endpoint(),
-			Scopes:       cfg.Scopes,
+	a.provider = provider
+	a.oauth2 = oauth2.Config{
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		RedirectURL:  cfg.RedirectURL,
+		Endpoint:     provider.Endpoint(),
+		Scopes:       cfg.Scopes,
+	}
+	a.idTokenVerifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
+	a.accessTokenVerifier = provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+	a.endSessionEndpoint = pc.EndSessionEndpoint
+	return a, nil
+}
+
+// newInternalBackchannelAuthenticator wires endpoints by hand: the browser-facing
+// authorize/logout URLs use the public issuer, while token exchange and JWKS use
+// the in-cluster Keycloak (cfg.KeycloakInternalURL). Tokens are validated against
+// the public issuer (their "iss" claim). Discovery is skipped so the public host
+// is never reached from the pod.
+func newInternalBackchannelAuthenticator(ctx context.Context, cfg *config.Config, a *Authenticator) (*Authenticator, error) {
+	issuerURL, err := url.Parse(cfg.Issuer)
+	if err != nil {
+		return nil, fmt.Errorf("parsing issuer %q: %w", cfg.Issuer, err)
+	}
+	realmPath := strings.TrimRight(issuerURL.Path, "/") // e.g. /realms/uds
+	publicBase := strings.TrimRight(cfg.Issuer, "/")
+	internalBase := strings.TrimRight(cfg.KeycloakInternalURL, "/") + realmPath
+
+	a.oauth2 = oauth2.Config{
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		RedirectURL:  cfg.RedirectURL,
+		Scopes:       cfg.Scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  publicBase + "/protocol/openid-connect/auth",    // browser (front-channel)
+			TokenURL: internalBase + "/protocol/openid-connect/token", // pod (back-channel)
 		},
-		idTokenVerifier:       provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
-		accessTokenVerifier:   provider.Verifier(&oidc.Config{SkipClientIDCheck: true}),
-		endSessionEndpoint:    pc.EndSessionEndpoint,
-		postLogoutRedirectURL: cfg.PostLogoutRedirectURL,
-		adminGroup:            cfg.AdminGroup,
-	}, nil
+	}
+
+	// Verify against the public issuer, but fetch keys from the in-cluster JWKS.
+	keySet := oidc.NewRemoteKeySet(ctx, internalBase+"/protocol/openid-connect/certs")
+	a.idTokenVerifier = oidc.NewVerifier(cfg.Issuer, keySet, &oidc.Config{ClientID: cfg.ClientID})
+	a.accessTokenVerifier = oidc.NewVerifier(cfg.Issuer, keySet, &oidc.Config{SkipClientIDCheck: true})
+	a.endSessionEndpoint = publicBase + "/protocol/openid-connect/logout"
+	return a, nil
 }
 
 // AuthCodeURL builds the URL to redirect the browser to in order to start the

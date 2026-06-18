@@ -39,6 +39,14 @@ type Config struct {
 	// "groups" claim. Defaults to the UDS Core admin group.
 	AdminGroup string
 
+	// KeycloakInternalURL, when set, is the in-cluster base URL of Keycloak
+	// (scheme://host:port, no realm path) used for server-side back-channel calls
+	// (token exchange + JWKS). The browser still uses the public Issuer for login,
+	// and tokens are still validated against the public Issuer. This avoids
+	// hair-pinning the back-channel through the ingress gateway/mesh. Example:
+	// http://keycloak-http.keycloak.svc.cluster.local:8080
+	KeycloakInternalURL string
+
 	// PeatNodeAddr is the gRPC target of the local peat sidecar node that backs
 	// data-source storage, e.g. "localhost:50051" or
 	// "peat-node-peat-node.peat-system.svc:50051". peat owns persistence,
@@ -65,6 +73,7 @@ func Load() (*Config, error) {
 		Scopes:                splitScopes(envOr("OIDC_SCOPES", "openid profile email roles")),
 		CookieSecure:          envOr("COOKIE_SECURE", "false") == "true",
 		AdminGroup:            envOr("ADMIN_GROUP", "/UDS Core/Admin"),
+		KeycloakInternalURL:   os.Getenv("KEYCLOAK_INTERNAL_URL"),
 		PeatNodeAddr:          os.Getenv("PEAT_NODE_ADDR"),
 		PeatCollection:        envOr("PEAT_COLLECTION", "data_sources"),
 		PeatTLS:               envOr("PEAT_TLS", "false") == "true",
