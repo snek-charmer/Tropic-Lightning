@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/base64"
@@ -57,6 +58,10 @@ func (s *Server) Routes() http.Handler {
 
 	// Protected JSON API: returns the caller's verified claims and roles.
 	mux.Handle("GET /api/me", s.auth.Authenticate(http.HandlerFunc(s.handleMe)))
+
+	// Peat node connection status (any authenticated user) — powers the
+	// dashboard status bubble and its live polling.
+	mux.Handle("GET /api/peat/status", s.auth.Authenticate(http.HandlerFunc(s.handlePeatStatus)))
 
 	// Example role-guarded endpoint: requires the "admin" realm role.
 	adminOnly := s.auth.RequireRealmRole("admin")
@@ -191,12 +196,39 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Initial peat-node connection state for the status bubble (the page also
+	// polls /api/peat/status to keep it live).
+	peat, connected := s.peatStatus(r.Context())
+
 	s.render(w, "dashboard.html", map[string]any{
-		"Username":    firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
-		"Email":       claims.Email,
-		"RealmRoles":  claims.AllRealmRoles(),
-		"ClientRoles": clientRoles,
-		"IsAdmin":     claims.HasRealmRole("admin"),
+		"Username":      firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
+		"Email":         claims.Email,
+		"RealmRoles":    claims.AllRealmRoles(),
+		"ClientRoles":   clientRoles,
+		"IsAdmin":       claims.HasRealmRole("admin"),
+		"PeatConnected": connected,
+		"Peat":          peat,
+	})
+}
+
+// peatStatus probes the peat node, bounded by a short timeout so the page never
+// hangs when the node is unreachable. connected is true when the node answered.
+func (s *Server) peatStatus(parent context.Context) (datasource.MeshStatus, bool) {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	st, err := s.dataSources.Status(ctx)
+	return st, err == nil
+}
+
+// handlePeatStatus reports the peat-node connection as JSON (polled by the
+// dashboard bubble). connected=false means the node is unreachable.
+func (s *Server) handlePeatStatus(w http.ResponseWriter, r *http.Request) {
+	st, connected := s.peatStatus(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"connected":       connected,
+		"node_id":         st.NodeID,
+		"sync_active":     st.SyncActive,
+		"connected_peers": st.ConnectedPeers,
 	})
 }
 

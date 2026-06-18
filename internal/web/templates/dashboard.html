@@ -13,6 +13,11 @@
     .btn { display: inline-block; background: #fff; color: #4636f5; border: 1px solid #4636f5; padding: .5rem 1rem; border-radius: 8px; text-decoration: none; cursor: pointer; font: inherit; }
     h1 { margin-top: 0; }
     code { background: #f4f4f8; padding: .1rem .35rem; border-radius: 4px; }
+    .status { display: inline-flex; align-items: center; gap: .5rem; font-weight: 600; }
+    .dot { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; flex: none; box-shadow: 0 0 0 3px rgba(0,0,0,.04); }
+    .dot.green { background: #1c9d52; }
+    .dot.red { background: #d63031; }
+    .dot.unknown { background: #b0b0b0; }
   </style>
 </head>
 <body>
@@ -22,6 +27,43 @@
     {{if .IsAdmin}}<p class="admin">★ You hold the <strong>admin</strong> realm role.</p>{{end}}
     <form method="POST" action="/auth/logout"><button class="btn" type="submit">Sign out</button></form>
   </div>
+
+  <div class="card">
+    <h2>peat node</h2>
+    <p class="status">
+      <span id="peat-dot" class="dot {{if .PeatConnected}}green{{else}}red{{end}}"></span>
+      <span id="peat-text">{{if .PeatConnected}}Connected{{else}}Disconnected{{end}}</span>
+    </p>
+    <p id="peat-detail" class="muted">
+      {{- if .PeatConnected}}node <code>{{.Peat.NodeID}}</code> · {{.Peat.ConnectedPeers}} peer(s){{if .Peat.SyncActive}} · syncing{{end}}{{else}}peat node is not reachable{{end -}}
+    </p>
+  </div>
+  <script>
+    async function refreshPeat() {
+      var dot = document.getElementById('peat-dot');
+      var txt = document.getElementById('peat-text');
+      var det = document.getElementById('peat-detail');
+      try {
+        var r = await fetch('/api/peat/status', { headers: { 'Accept': 'application/json' }, cache: 'no-store' });
+        if (!r.ok) throw new Error('status ' + r.status);
+        var d = await r.json();
+        if (d.connected) {
+          dot.className = 'dot green';
+          txt.textContent = 'Connected';
+          det.textContent = 'node ' + (d.node_id || '?') + ' · ' + (d.connected_peers || 0) + ' peer(s)' + (d.sync_active ? ' · syncing' : '');
+        } else {
+          dot.className = 'dot red';
+          txt.textContent = 'Disconnected';
+          det.textContent = 'peat node is not reachable';
+        }
+      } catch (e) {
+        dot.className = 'dot red';
+        txt.textContent = 'Disconnected';
+        det.textContent = 'status check failed';
+      }
+    }
+    setInterval(refreshPeat, 5000);
+  </script>
 
   {{if .IsAdmin}}
   <div class="card">

@@ -425,3 +425,41 @@ func TestDataSourceCreateViaFormRedirects(t *testing.T) {
 		t.Errorf("redirect location = %q, want ok=created", loc)
 	}
 }
+
+func TestPeatStatusEndpoint(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	// Any authenticated user can read peat status. The in-memory store reports a
+	// reachable (connected) status with no error.
+	token := kc.SignToken(t, map[string]any{"preferred_username": "alice"})
+	req := httptest.NewRequest(http.MethodGet, "/api/peat/status", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["connected"] != true {
+		t.Errorf("connected = %v, want true", got["connected"])
+	}
+}
+
+func TestPeatStatusRequiresAuth(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/peat/status", nil) // no token
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
