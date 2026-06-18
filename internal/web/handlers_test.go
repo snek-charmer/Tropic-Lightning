@@ -17,6 +17,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
+	"github.com/defenseunicorns/keycloak-portal/internal/weather"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
@@ -27,7 +28,7 @@ func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	pl := pilots.NewService(pilots.NewMemoryStore(), ds, nil)
 	dsets := dataset.NewService(dataset.NewMemoryStore(), ds, nil)
 	ops := operators.NewService(operators.NewMemoryStore())
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets, ops)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets, ops, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -551,7 +552,7 @@ func opServer(t *testing.T, kc *authtest.Keycloak, pstore *pilots.MemoryStore, o
 	t.Helper()
 	ds := datasource.NewService(datasource.NewMemoryStore())
 	pl := pilots.NewService(pstore, ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -798,7 +799,7 @@ func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
 		pilots.NewService(pilots.NewMemoryStore(), ds, nil),
-		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops)
+		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -832,7 +833,7 @@ func TestOperatorCanEditAssignedDataset(t *testing.T) {
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops)
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -884,7 +885,7 @@ func TestOperatorUpdatesExistingRow(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
 	h := srv.Routes()
 
 	tok := kc.SignToken(t, map[string]any{"preferred_username": "s4", "realm_access": map[string]any{"roles": []string{"user"}}})
@@ -919,7 +920,7 @@ func TestOperatorBulkSave(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
 	h := srv.Routes()
 
 	body := `{"rows":[{"id":"r000001","fields":{"name":"Alice","status":"grounded"}},{"id":"","fields":{"name":"Bob","status":"ok"}}],"deletes":[]}`
@@ -992,5 +993,107 @@ func TestUploadDelimiterReparse(t *testing.T) {
 	_ = json.Unmarshal(prrec.Body.Bytes(), &prev2)
 	if len(prev2.Columns) != 1 {
 		t.Errorf("forced comma cols = %d, want 1", len(prev2.Columns))
+	}
+}
+
+func TestDatasetStatusWheel(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_roster", "Roster", []string{"name", "status"})
+	_ = dstore.PutRow(ctx, "ds_roster", "r1", map[string]string{"name": "A", "status": "ready"})
+	_ = dstore.PutRow(ctx, "ds_roster", "r2", map[string]string{"name": "B", "status": "ready"})
+	_ = dstore.PutRow(ctx, "ds_roster", "r3", map[string]string{"name": "C", "status": "down"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	// Set the visualization to a status wheel grouped by "status".
+	form := url.Values{"type": {"wheel"}, "group_by": {"status"}}
+	pr := httptest.NewRequest(http.MethodPost, "/datasets/ds_roster/view", strings.NewReader(form.Encode()))
+	pr.Header.Set("Authorization", "Bearer "+tok)
+	pr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	prr := httptest.NewRecorder()
+	h.ServeHTTP(prr, pr)
+	if prr.Code != http.StatusSeeOther {
+		t.Fatalf("set view = %d", prr.Code)
+	}
+
+	// The viewer now renders the wheel: a conic-gradient and the legend counts.
+	vr := httptest.NewRequest(http.MethodGet, "/datasets/ds_roster", nil)
+	vr.Header.Set("Authorization", "Bearer "+tok)
+	vrr := httptest.NewRecorder()
+	h.ServeHTTP(vrr, vr)
+	body := vrr.Body.String()
+	if !strings.Contains(body, "conic-gradient") {
+		t.Error("wheel view should render a conic-gradient donut")
+	}
+	if !strings.Contains(body, "Grouped by") || !strings.Contains(body, "ready") {
+		t.Error("wheel legend should show the grouped values")
+	}
+}
+
+func TestWeatherConnectorCreateFlow(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"current":{"time":"2026-06-18T12:00","temperature_2m":18.0,"wind_speed_10m":9.0,"weather_code":0}}`))
+	}))
+	defer api.Close()
+
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	wx := weather.NewService(weather.NewMemoryStore(), dstore, nil)
+	wx.SetBaseURL(api.URL)
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, wx)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	form := url.Values{"name": {"AOR"}, "locations": {"Hill AFB, 41.124, -111.973\nRamstein, 49.437, 7.6"}}
+	cr := httptest.NewRequest(http.MethodPost, "/datasources/weather", strings.NewReader(form.Encode()))
+	cr.Header.Set("Authorization", "Bearer "+tok)
+	cr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	crr := httptest.NewRecorder()
+	h.ServeHTTP(crr, cr)
+	if crr.Code != http.StatusSeeOther {
+		t.Fatalf("create weather = %d (%s)", crr.Code, crr.Body.String())
+	}
+	if loc := crr.Header().Get("Location"); loc != "/datasets/wx_aor" {
+		t.Fatalf("redirect = %q", loc)
+	}
+
+	// The dataset exists with the two locations' current conditions.
+	rows, err := dstore.ListRows(ctx, "wx_aor")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows = %d, %v", len(rows), err)
+	}
+	// And it's assignable + viewable through the portal.
+	vr := httptest.NewRequest(http.MethodGet, "/datasets/wx_aor", nil)
+	vr.Header.Set("Authorization", "Bearer "+tok)
+	vrr := httptest.NewRecorder()
+	h.ServeHTTP(vrr, vr)
+	if !strings.Contains(vrr.Body.String(), "Hill AFB") {
+		t.Error("weather dataset view should list the configured location")
 	}
 }

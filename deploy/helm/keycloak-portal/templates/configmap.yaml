@@ -24,3 +24,7 @@ data:
   PEAT_NODE_ADDR: {{ .Values.config.peatNodeAddr | quote }}
   PEAT_COLLECTION: {{ .Values.config.peatCollection | quote }}
   PEAT_TLS: {{ .Values.config.peatTls | quote }}
+  WEATHER_POLL_INTERVAL: {{ .Values.config.weatherPollInterval | quote }}
+  {{- with .Values.config.weatherApiUrl }}
+  WEATHER_API_URL: {{ . | quote }}
+  {{- end }}

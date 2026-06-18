@@ -25,13 +25,20 @@ type Operator struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// ViewConfig is how a dataset is visualized (configurable per dataset).
+type ViewConfig struct {
+	Type    string `json:"type"`     // "table" (default) | "wheel"
+	GroupBy string `json:"group_by"` // column to group by for the wheel
+}
+
 // Dataset is a registered dataset and the operators assigned to it.
 type Dataset struct {
-	Key        string   `json:"key"`        // "pilots" or the generic collection name
-	Name       string   `json:"name"`       // display name
-	Kind       string   `json:"kind"`       // KindPilots | KindGeneric
-	Collection string   `json:"collection"` // peat collection backing it
-	AssignedTo []string `json:"assigned_to"`
+	Key        string     `json:"key"`        // "pilots" or the generic collection name
+	Name       string     `json:"name"`       // display name
+	Kind       string     `json:"kind"`       // KindPilots | KindGeneric
+	Collection string     `json:"collection"` // peat collection backing it
+	AssignedTo []string   `json:"assigned_to"`
+	View       ViewConfig `json:"view"`
 }
 
 // AssignedToUser reports whether username is assigned to the dataset.

@@ -79,6 +79,38 @@
     <a class="btn" href="/datasources/upload">Add file (upload) →</a>
   </div>
 
+  {{if .WeatherEnabled}}
+  <div class="card">
+    <h2>Add a live weather source</h2>
+    <p class="muted">Pulls <strong>current conditions</strong> from <code>open-meteo.com</code> for each location into a dataset you can assign and visualize. The node refreshes it in the background when connected; operators see the last-synced reading while disconnected.</p>
+    <form method="POST" action="/datasources/weather">
+      <label for="wxname">Name</label>
+      <input type="text" id="wxname" name="name" placeholder="AOR weather" required>
+
+      <label for="locations">Locations <span class="muted">— one per line: <code>label, latitude, longitude</code></span></label>
+      <textarea id="locations" name="locations" rows="4" required
+        style="width:100%; padding:.55rem; border:1px solid #ccc; border-radius:8px; font:inherit; box-sizing:border-box;"
+        placeholder="Hill AFB, 41.124, -111.973&#10;Ramstein AB, 49.437, 7.600&#10;Kadena AB, 26.356, 127.769"></textarea>
+
+      <button class="btn" type="submit">Add weather source</button>
+    </form>
+    {{if .WeatherConnectors}}
+    <table style="margin-top:1rem;">
+      <thead><tr><th>Name</th><th>Locations</th><th></th></tr></thead>
+      <tbody>
+        {{range .WeatherConnectors}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td>{{len .Locations}}</td>
+          <td><a class="btn" href="/datasets/{{.Collection}}">View →</a></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
+  {{end}}
+
   <div class="card">
     <h2>Configured sources</h2>
     {{if .Sources}}

@@ -18,6 +18,8 @@
     th { position:sticky; top:0; background:#fafafe; }
     .wrap { overflow-x:auto; }
     code { background:#f4f4f8; padding:.05rem .3rem; border-radius:4px; }
+    .donut { width:170px; height:170px; border-radius:50%; position:relative; flex:none; }
+    .donut .hole { position:absolute; inset:26%; background:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:1.1rem; color:#444; }
   </style>
 </head>
 <body>
@@ -55,6 +57,51 @@
   {{if .FilterCol}}{{$fq = printf "&col=%s" (urlquery .FilterCol)}}{{end}}
   {{if .FilterVal}}{{$fq = printf "%s&val=%s" $fq (urlquery .FilterVal)}}{{end}}
   {{if .FilterQuery}}{{$fq = printf "%s&q=%s" $fq (urlquery .FilterQuery)}}{{end}}
+
+  <div class="card">
+    <h2 style="margin-top:0;">Visualization</h2>
+    {{if and (eq .ViewType "wheel") .WheelSegments}}
+      <div style="display:flex; gap:2rem; align-items:center; flex-wrap:wrap;">
+        <div class="donut" style="background:{{.WheelGradient}};"><div class="hole">{{.Total}}</div></div>
+        <div>
+          <p class="muted" style="margin:0 0 .5rem;">Grouped by <strong>{{.ViewGroupBy}}</strong> · {{.Total}} rows{{if .FilterActive}} (filtered of {{.GrandTotal}}){{end}}.</p>
+          <table style="font-size:.85rem;">
+            <tbody>
+            {{range .WheelSegments}}
+              <tr>
+                <td><span style="display:inline-block;width:.85rem;height:.85rem;border-radius:3px;background:{{.Color}};"></span></td>
+                <td>{{.Label}}</td>
+                <td style="text-align:right;font-weight:700;padding-left:1rem;">{{.Count}}</td>
+                <td class="muted" style="text-align:right;padding-left:.6rem;">{{printf "%.0f%%" .Pct}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {{else if eq .ViewType "wheel"}}
+      <p class="muted">Wheel selected, but no <em>group-by</em> column is set (or there are no rows to chart). Pick one below.</p>
+    {{else}}
+      <p class="muted">Showing as a <strong>table</strong>. Switch to a <strong>status wheel</strong> to chart any column (e.g. weather condition, status, base).</p>
+    {{end}}
+
+    <form method="POST" action="/datasets/{{$coll}}/view?{{$bq}}" style="display:flex; gap:1rem; align-items:flex-end; flex-wrap:wrap; margin-top:1rem;">
+      <label style="font-size:.72rem; font-weight:700; color:#555;">View as
+        <select name="type" style="display:block; padding:.3rem; border:1px solid #ccc; border-radius:6px;">
+          <option value="table" {{if ne .ViewType "wheel"}}selected{{end}}>Table</option>
+          <option value="wheel" {{if eq .ViewType "wheel"}}selected{{end}}>Status wheel</option>
+        </select>
+      </label>
+      <label style="font-size:.72rem; font-weight:700; color:#555;">Group by (for wheel)
+        <select name="group_by" style="display:block; padding:.3rem; border:1px solid #ccc; border-radius:6px;">
+          <option value="">—</option>
+          {{$gb := .ViewGroupBy}}
+          {{range .Columns}}<option value="{{.}}" {{if eq $gb .}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </label>
+      <button type="submit" style="background:#4636f5;color:#fff;border:none;padding:.45rem 1rem;border-radius:8px;font:inherit;font-weight:600;cursor:pointer;">Apply</button>
+    </form>
+  </div>
 
   <div class="card">
     <h2 style="margin-top:0;">Edit</h2>

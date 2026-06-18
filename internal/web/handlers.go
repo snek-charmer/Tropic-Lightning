@@ -7,11 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
+	"github.com/defenseunicorns/keycloak-portal/internal/weather"
 )
 
 //go:embed templates/*.html
@@ -43,10 +46,12 @@ type Server struct {
 	pilots      *pilots.Service
 	datasets    *dataset.Service
 	operators   *operators.Service
+	weather     *weather.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service) (*Server, error) {
+// weather may be nil (no live connectors configured).
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service) (*Server, error) {
 	funcs := template.FuncMap{
 		"hasPrefix":  strings.HasPrefix,
 		"trimPrefix": strings.TrimPrefix,
@@ -55,7 +60,7 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets, operators: ops}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets, operators: ops, weather: wx}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -101,6 +106,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /datasources/preview", admin(s.handleDatasetPreview))
 	mux.Handle("POST /datasources/import", admin(s.handleDatasetImport))
 
+	// Live weather connector (Open-Meteo): admin configures locations.
+	mux.Handle("POST /datasources/weather", admin(s.handleWeatherCreate))
+
 	// Pilots import/manage (admin-only).
 	mux.Handle("GET /pilots", admin(s.handlePilotsPage))
 	mux.Handle("POST /pilots/import", admin(s.handlePilotsImport))
@@ -122,6 +130,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /datasets/{collection}/rows/update", authed(s.handleDatasetUpdateRow))
 	mux.Handle("POST /datasets/{collection}/rows/delete", authed(s.handleDatasetDeleteRow))
 	mux.Handle("POST /datasets/{collection}/bulk", authed(s.handleDatasetBulkSave))
+	// Per-dataset visualization config (table | wheel).
+	mux.Handle("POST /datasets/{collection}/view", authed(s.handleDatasetSetView))
 	mux.Handle("GET /missions", authed(s.handleMissions))
 	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
 	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
@@ -351,13 +361,19 @@ func (s *Server) handleDataSourcesPage(w http.ResponseWriter, r *http.Request) {
 	}
 	// Best-effort mesh status banner; never block the page on it.
 	status, statusErr := s.dataSources.Status(r.Context())
+	var wxConnectors []weather.Connector
+	if s.weather != nil {
+		wxConnectors, _ = s.weather.ListConnectors(r.Context())
+	}
 	s.render(w, "datasources.html", map[string]any{
-		"Sources":       sources,
-		"KnownTypes":    datasource.KnownTypes,
-		"Error":         r.URL.Query().Get("error"),
-		"Created":       r.URL.Query().Get("ok") == "created",
-		"Mesh":          status,
-		"MeshReachable": statusErr == nil,
+		"Sources":           sources,
+		"KnownTypes":        datasource.KnownTypes,
+		"Error":             r.URL.Query().Get("error"),
+		"Created":           r.URL.Query().Get("ok") == "created",
+		"Mesh":              status,
+		"MeshReachable":     statusErr == nil,
+		"WeatherEnabled":    s.weather != nil,
+		"WeatherConnectors": wxConnectors,
 	})
 }
 
@@ -533,6 +549,70 @@ func (s *Server) handleDatasetImport(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
+// handleWeatherCreate configures a live Open-Meteo weather source from a name
+// and a textarea of "label,latitude,longitude" lines, registers it as an
+// assignable dataset, and seeds it with a first fetch.
+func (s *Server) handleWeatherCreate(w http.ResponseWriter, r *http.Request) {
+	fail := func(msg string) {
+		http.Redirect(w, r, "/datasources?error="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
+	if s.weather == nil {
+		fail("weather connector is not configured on this deployment")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		fail("invalid form")
+		return
+	}
+	name := r.PostFormValue("name")
+	locs, err := parseLocations(r.PostFormValue("locations"))
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	c, err := s.weather.CreateConnector(r.Context(), name, locs)
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	// Register as an assignable, viewable dataset + a catalog entry.
+	if err := s.operators.RegisterDataset(r.Context(), c.Collection, c.Name, operators.KindGeneric, c.Collection); err != nil {
+		slog.Warn("register weather dataset", "err", err)
+	}
+	if _, err := s.dataSources.Create(r.Context(), datasource.Input{
+		Name: c.Name, Type: "weather", Endpoint: "dataset://" + c.Collection, Enabled: true,
+	}); err != nil {
+		slog.Warn("register weather catalog entry", "err", err)
+	}
+	http.Redirect(w, r, "/datasets/"+c.Collection, http.StatusSeeOther)
+}
+
+// parseLocations reads "label,lat,lon" lines into weather locations.
+func parseLocations(raw string) ([]weather.Location, error) {
+	var out []weather.Location
+	for i, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ",")
+		if len(parts) < 3 {
+			return nil, fmt.Errorf("line %d: expected \"label, latitude, longitude\"", i+1)
+		}
+		lat, err1 := strconv.ParseFloat(strings.TrimSpace(parts[len(parts)-2]), 64)
+		lon, err2 := strconv.ParseFloat(strings.TrimSpace(parts[len(parts)-1]), 64)
+		if err1 != nil || err2 != nil {
+			return nil, fmt.Errorf("line %d: latitude/longitude must be numbers", i+1)
+		}
+		label := strings.TrimSpace(strings.Join(parts[:len(parts)-2], ","))
+		out = append(out, weather.Location{Label: label, Lat: lat, Lon: lon})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("add at least one location (label, latitude, longitude)")
+	}
+	return out, nil
+}
+
 // handleDatasetView renders an ingested dataset's rows (kept columns).
 func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
@@ -564,24 +644,125 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 	if len(shown) > pilotsDisplayLimit {
 		shown = shown[:pilotsDisplayLimit]
 	}
+
+	// Visualization config (table by default; a configurable status wheel). The
+	// wheel is computed over the filtered rows so it tracks the current view.
+	view := s.datasetView(r.Context(), collection)
+	var segments []wheelSegment
+	var gradient template.CSS
+	if view.Type == "wheel" && view.GroupBy != "" {
+		segments, gradient = computeWheel(filtered, view.GroupBy)
+	}
+
 	s.render(w, "dataset_view.html", map[string]any{
-		"Collection":   collection,
-		"Name":         name,
-		"Columns":      cols,
-		"Rows":         shown,
-		"Shown":        len(shown),
-		"Total":        len(filtered),
-		"GrandTotal":   len(rows),
-		"FilterCol":    col,
-		"FilterVal":    val,
-		"FilterQuery":  q,
-		"FilterActive": (col != "" && val != "") || q != "",
-		"EditMode":     r.URL.Query().Get("edit") == "1",
-		"BackQuery":    r.URL.RawQuery, // preserve filter+edit on edit actions
-		"Imported":     r.URL.Query().Get("imported"),
-		"Capped":       r.URL.Query().Get("capped"),
-		"Error":        r.URL.Query().Get("error"),
+		"Collection":    collection,
+		"Name":          name,
+		"Columns":       cols,
+		"Rows":          shown,
+		"Shown":         len(shown),
+		"Total":         len(filtered),
+		"GrandTotal":    len(rows),
+		"FilterCol":     col,
+		"FilterVal":     val,
+		"FilterQuery":   q,
+		"FilterActive":  (col != "" && val != "") || q != "",
+		"EditMode":      r.URL.Query().Get("edit") == "1",
+		"BackQuery":     r.URL.RawQuery, // preserve filter+edit on edit actions
+		"Imported":      r.URL.Query().Get("imported"),
+		"Capped":        r.URL.Query().Get("capped"),
+		"Error":         r.URL.Query().Get("error"),
+		"ViewType":      view.Type,
+		"ViewGroupBy":   view.GroupBy,
+		"WheelSegments": segments,
+		"WheelGradient": gradient,
+		"IsAdmin":       s.auth.IsAdmin(claimsOf(r)),
 	})
+}
+
+// datasetView returns the dataset's visualization config (defaulting to table).
+func (s *Server) datasetView(ctx context.Context, collection string) operators.ViewConfig {
+	d, err := s.operators.GetDataset(ctx, collection)
+	if err != nil || d.View.Type == "" {
+		return operators.ViewConfig{Type: "table"}
+	}
+	return d.View
+}
+
+// handleDatasetSetView updates how a dataset is visualized (admins + assigned
+// operators), then returns to the viewer.
+func (s *Server) handleDatasetSetView(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		return s.operators.SetView(ctx, c, operators.ViewConfig{
+			Type:    r.PostFormValue("type"),
+			GroupBy: r.PostFormValue("group_by"),
+		})
+	})
+}
+
+// wheelSegment is one slice of a status wheel: a distinct value and its share.
+type wheelSegment struct {
+	Label string
+	Count int
+	Pct   float64
+	Color string
+}
+
+// wheelPalette colors wheel slices, cycling if there are more values than colors.
+var wheelPalette = []string{
+	"#4636f5", "#22b8cf", "#51cf66", "#fcc419", "#ff6b6b",
+	"#845ef7", "#ff922b", "#20c997", "#f06595", "#868e96",
+}
+
+// computeWheel groups rows by a column into wheel slices (largest first) and
+// builds the conic-gradient backing the donut.
+func computeWheel(rows []dataset.Row, groupBy string) ([]wheelSegment, template.CSS) {
+	counts := map[string]int{}
+	for _, r := range rows {
+		v := strings.TrimSpace(r.Fields[groupBy])
+		if v == "" {
+			v = "(blank)"
+		}
+		counts[v]++
+	}
+	if len(counts) == 0 {
+		return nil, ""
+	}
+	segs := make([]wheelSegment, 0, len(counts))
+	for label, n := range counts {
+		segs = append(segs, wheelSegment{Label: label, Count: n})
+	}
+	// Largest first, then alphabetical, for a stable, readable order.
+	sort.Slice(segs, func(i, j int) bool {
+		if segs[i].Count != segs[j].Count {
+			return segs[i].Count > segs[j].Count
+		}
+		return segs[i].Label < segs[j].Label
+	})
+
+	total := len(rows)
+	var b strings.Builder
+	b.WriteString("conic-gradient(")
+	acc := 0.0
+	for i := range segs {
+		segs[i].Color = wheelPalette[i%len(wheelPalette)]
+		if total > 0 {
+			segs[i].Pct = float64(segs[i].Count) / float64(total) * 100
+		}
+		start := acc
+		acc += segs[i].Pct
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s %.3f%% %.3f%%", segs[i].Color, start, acc)
+	}
+	b.WriteString(")")
+	return segs, template.CSS(b.String())
+}
+
+// claimsOf is a small helper for templates that need the admin flag.
+func claimsOf(r *http.Request) *auth.Claims {
+	c, _ := auth.ClaimsFromContext(r.Context())
+	return c
 }
 
 // dataset edits (assigned operators + admins). Each checks access, mutates, and

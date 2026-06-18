@@ -30,6 +30,16 @@ spec:
           {{- include "keycloak-portal.selectorLabels" . | nindent 10 }}
         remoteNamespace: keycloak
         description: "Portal to Keycloak (OIDC discovery/token)"
+      {{- if .Values.uds.weather.egress }}
+      # Live weather connector (Open-Meteo) reaches an external HTTPS API. In a
+      # fully air-gapped site, disable this and point WEATHER_API_URL at a mirror.
+      - direction: Egress
+        selector:
+          {{- include "keycloak-portal.selectorLabels" . | nindent 10 }}
+        remoteGenerated: Anywhere
+        port: {{ .Values.uds.weather.port }}
+        description: "Portal to Open-Meteo weather API (external HTTPS)"
+      {{- end }}
       {{- with .Values.uds.extraAllow }}
       {{- toYaml . | nindent 6 }}
       {{- end }}

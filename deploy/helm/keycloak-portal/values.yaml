@@ -54,6 +54,12 @@ config:
   peatCollection: "data_sources"
   # Dial the peat node over TLS (false for plaintext sidecar/in-mesh traffic).
   peatTls: false
+  # How often the background poller refreshes live weather connectors
+  # (Open-Meteo) when connected. "0" or "off" disables background polling.
+  weatherPollInterval: "10m"
+  # Override the Open-Meteo endpoint (e.g. a self-hosted mirror for air-gapped
+  # sites). Empty uses the public api.open-meteo.com.
+  weatherApiUrl: ""
 
 # -- OIDC client secret handling.
 clientSecret:
@@ -112,6 +118,11 @@ uds:
     # Egress NetworkPolicy target for the peat node (data-source backend).
     namespace: peat-system
     port: 50051
+  weather:
+    # Allow egress to the external Open-Meteo weather API. Set false for a fully
+    # air-gapped site (and point config.weatherApiUrl at an in-cluster mirror).
+    egress: true
+    port: 443
   # Additional spec.network.allow rules appended verbatim.
   extraAllow: []
 

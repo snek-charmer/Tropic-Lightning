@@ -72,12 +72,33 @@ func (s *Service) DeleteOperator(ctx context.Context, username string) error {
 }
 
 // RegisterDataset records a dataset (idempotent), preserving existing
-// assignments and refreshing the display name.
+// assignments and view config and refreshing the display name.
 func (s *Service) RegisterDataset(ctx context.Context, key, name, kind, collection string) error {
 	d := Dataset{Key: key, Name: name, Kind: kind, Collection: collection}
 	if existing, err := s.store.GetDataset(ctx, key); err == nil {
 		d.AssignedTo = existing.AssignedTo
+		d.View = existing.View
 	}
+	return s.store.PutDataset(ctx, d)
+}
+
+// GetDataset returns a registered dataset by key.
+func (s *Service) GetDataset(ctx context.Context, key string) (Dataset, error) {
+	return s.store.GetDataset(ctx, key)
+}
+
+// SetView updates how a dataset is visualized.
+func (s *Service) SetView(ctx context.Context, key string, view ViewConfig) error {
+	d, err := s.store.GetDataset(ctx, key)
+	if err != nil {
+		return err
+	}
+	view.Type = strings.TrimSpace(view.Type)
+	if view.Type != "wheel" {
+		view.Type = "table"
+	}
+	view.GroupBy = strings.TrimSpace(view.GroupBy)
+	d.View = view
 	return s.store.PutDataset(ctx, d)
 }
 
