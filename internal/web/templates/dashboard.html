@@ -45,19 +45,23 @@
 
 {{if eq .View "operator"}}
 <div class="card">
-  <h2>Your datasets {{if .IsAdmin}}<span class="muted" style="font-weight:400;">— previewing <code>{{.PreviewAs}}</code></span>{{end}}</h2>
+  <div class="toolbar">
+    <h2 style="margin:0;">Your data sources {{if .IsAdmin}}<span class="muted" style="font-weight:400;">— previewing <code>{{.PreviewAs}}</code></span>{{end}}</h2>
+    <span class="spacer"></span>
+    <a class="btn ghost sm" href="/catalog">Browse &amp; subscribe →</a>
+  </div>
   {{if .MyDatasets}}
-    <div class="grid2">
+    <div class="grid2" style="margin-top:1rem;">
       {{range .MyDatasets}}
         {{if eq .Kind "pilots"}}
           <a class="card tight" href="/missions" style="color:inherit; margin:0;"><strong>{{.Name}}</strong><br><span class="muted">Mission readiness →</span></a>
         {{else}}
-          <a class="card tight" href="/datasets/{{.Collection}}" style="color:inherit; margin:0;"><strong>{{.Name}}</strong><br><span class="muted">Open dataset →</span></a>
+          <a class="card tight" href="/datasets/{{.Collection}}" style="color:inherit; margin:0;"><strong>{{.Name}}</strong><br><span class="muted">Open data source →</span></a>
         {{end}}
       {{end}}
     </div>
   {{else}}
-    <div class="empty">No datasets are assigned to you yet. An admin assigns datasets under <em>Operators &amp; assignments</em>.</div>
+    <div class="empty" style="margin-top:1rem;">You haven't subscribed to any data sources yet. <a href="/catalog">Browse the catalog</a> and subscribe to the ones you work with.</div>
   {{end}}
 </div>
 {{end}}

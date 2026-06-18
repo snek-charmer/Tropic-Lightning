@@ -113,7 +113,41 @@ func (s *Service) SetView(ctx context.Context, key string, view ViewConfig) erro
 	return s.store.PutDataset(ctx, d)
 }
 
-// SetAssignments replaces the operator list for a dataset.
+// Subscribe adds username to a dataset's subscriber list (idempotent). A
+// subscription is what grants a user access to the dataset.
+func (s *Service) Subscribe(ctx context.Context, key, username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return ValidationError{"a username is required"}
+	}
+	d, err := s.store.GetDataset(ctx, key)
+	if err != nil {
+		return err
+	}
+	if d.AssignedToUser(username) {
+		return nil
+	}
+	d.AssignedTo = append(d.AssignedTo, username)
+	return s.store.PutDataset(ctx, d)
+}
+
+// Unsubscribe removes username from a dataset's subscriber list.
+func (s *Service) Unsubscribe(ctx context.Context, key, username string) error {
+	d, err := s.store.GetDataset(ctx, key)
+	if err != nil {
+		return err
+	}
+	kept := make([]string, 0, len(d.AssignedTo))
+	for _, u := range d.AssignedTo {
+		if u != username {
+			kept = append(kept, u)
+		}
+	}
+	d.AssignedTo = kept
+	return s.store.PutDataset(ctx, d)
+}
+
+// SetAssignments replaces the subscriber list for a dataset.
 func (s *Service) SetAssignments(ctx context.Context, key string, usernames []string) error {
 	d, err := s.store.GetDataset(ctx, key)
 	if err != nil {

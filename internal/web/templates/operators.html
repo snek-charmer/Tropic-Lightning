@@ -1,7 +1,7 @@
 {{define "operators.html"}}
 <div class="page-head">
-  <h1>Operators &amp; assignments</h1>
-  <p class="muted">Register operator identities (Keycloak usernames) and choose which datasets each can see.</p>
+  <h1>Operators</h1>
+  <p class="muted">Register operator identities (Keycloak usernames) so you can preview their view from the dashboard's <em>Viewing as</em> selector. Users subscribe to data sources themselves under <a href="/catalog">Data sources</a>.</p>
 </div>
 
 {{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
@@ -29,25 +29,5 @@
     </table>
   </div>
   {{else}}<div class="empty">No operators yet.</div>{{end}}
-</div>
-
-<div class="card">
-  <h2>Dataset assignments</h2>
-  <p class="muted" style="margin-top:-.4rem;">Tick the operators who should see each dataset, then Save.</p>
-  {{if .Datasets}}
-    {{$ops := .Operators}}
-    {{range .Datasets}}
-    {{$d := .}}
-    <form method="POST" action="/datasets/{{.Key}}/assign" style="border-top:1px solid var(--border); padding-top:.9rem; margin-top:.9rem;">
-      <div style="margin-bottom:.5rem;"><strong>{{.Name}}</strong> <span class="pill gray">{{.Kind}}</span> <span class="muted"><code>{{.Collection}}</code></span></div>
-      <div style="display:flex; flex-wrap:wrap; gap:.4rem 1.2rem;">
-        {{if $ops}}{{range $ops}}<label class="check"><input type="checkbox" name="op" value="{{.Username}}" {{if $d.AssignedToUser .Username}}checked{{end}}>{{.Username}}</label>{{end}}{{else}}<span class="muted">Add operators above first.</span>{{end}}
-      </div>
-      {{if $ops}}<button class="btn sm" type="submit" style="margin-top:.6rem;">Save</button>{{end}}
-    </form>
-    {{end}}
-  {{else}}
-    <div class="empty">No datasets registered yet. Import pilots or add a data source first.</div>
-  {{end}}
 </div>
 {{end}}

@@ -108,10 +108,11 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/admin", s.auth.Authenticate(adminOnly(http.HandlerFunc(s.handleAdmin))))
 
 	// Data sources: admin-only. admin wraps a handler with Authenticate + the
-	// admin guard.
+	// admin guard; authed wraps with Authenticate only (any logged-in user).
 	admin := func(h http.HandlerFunc) http.Handler {
 		return s.auth.Authenticate(adminOnly(h))
 	}
+	authed := func(h http.HandlerFunc) http.Handler { return s.auth.Authenticate(h) }
 	mux.Handle("GET /datasources", admin(s.handleDataSourcesPage))
 	mux.Handle("POST /datasources", admin(s.handleDataSourceCreateForm))
 	mux.Handle("POST /datasources/{id}/delete", admin(s.handleDataSourceDeleteForm))
@@ -136,14 +137,17 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /pilots/import", admin(s.handlePilotsImport))
 	mux.Handle("GET /api/pilots", admin(s.handlePilotsList))
 
-	// Operators & dataset assignments (admin-only).
+	// Operators registry (admin-only) — used for the dashboard "view as" preview.
 	mux.Handle("GET /operators", admin(s.handleOperatorsPage))
 	mux.Handle("POST /operators", admin(s.handleOperatorCreate))
 	mux.Handle("POST /operators/{username}/delete", admin(s.handleOperatorDelete))
-	mux.Handle("POST /datasets/{key}/assign", admin(s.handleDatasetAssign))
 
-	// Dataset access (authenticated; per-dataset assignment enforced in-handler).
-	authed := func(h http.HandlerFunc) http.Handler { return s.auth.Authenticate(h) }
+	// Data-source catalog: any authenticated user browses and self-subscribes.
+	mux.Handle("GET /catalog", authed(s.handleCatalogPage))
+	mux.Handle("POST /catalog/{key}/subscribe", authed(s.handleSubscribe))
+	mux.Handle("POST /catalog/{key}/unsubscribe", authed(s.handleUnsubscribe))
+
+	// Dataset access (authenticated; per-dataset subscription enforced in-handler).
 	mux.Handle("GET /datasets/{collection}", authed(s.handleDatasetView))
 	// Operators (assigned) and admins can edit generic datasets.
 	mux.Handle("POST /datasets/{collection}/columns/add", authed(s.handleDatasetAddColumn))
@@ -1235,7 +1239,7 @@ func (s *Server) canAccessDataset(r *http.Request, key string) bool {
 func (s *Server) forbidden(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte("<p>You don't have access to this dataset. Ask an admin to assign it to you. <a href=\"/dashboard\">Back</a></p>"))
+		_, _ = w.Write([]byte("<p>You're not subscribed to this data source. <a href=\"/catalog\">Browse &amp; subscribe</a> · <a href=\"/dashboard\">Back</a></p>"))
 		return
 	}
 	writeJSON(w, http.StatusForbidden, map[string]string{"error": "not assigned to this dataset"})
@@ -1266,23 +1270,13 @@ func (s *Server) reconcileDatasets(ctx context.Context) {
 }
 
 func (s *Server) handleOperatorsPage(w http.ResponseWriter, r *http.Request) {
-	// Make sure every dataset (pilots + uploaded, including ones imported before
-	// the assignment registry existed) is registered and therefore assignable.
-	s.reconcileDatasets(r.Context())
-
 	ops, err := s.operators.ListOperators(r.Context())
 	if err != nil {
 		http.Error(w, "failed to list operators: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	sets, err := s.operators.ListDatasets(r.Context())
-	if err != nil {
-		http.Error(w, "failed to list datasets: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	s.render(w, r, "operators.html", "Operators", "operators", map[string]any{
 		"Operators": ops,
-		"Datasets":  sets,
 		"Error":     r.URL.Query().Get("error"),
 	})
 }
@@ -1307,17 +1301,71 @@ func (s *Server) handleOperatorDelete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/operators", http.StatusSeeOther)
 }
 
-func (s *Server) handleDatasetAssign(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/operators?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+// --- data-source catalog & self-subscribe (any authenticated user) ---
+
+// handleCatalogPage lists every registered dataset with a subscribe/unsubscribe
+// control. Subscribing is what grants the user access to view the data.
+func (s *Server) handleCatalogPage(w http.ResponseWriter, r *http.Request) {
+	s.reconcileDatasets(r.Context()) // ensure pilots + uploaded/live datasets are listed
+	me := s.operatorName(claimsOf(r))
+	sets, err := s.operators.ListDatasets(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list data sources: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	key := r.PathValue("key")
-	if err := s.operators.SetAssignments(r.Context(), key, r.PostForm["op"]); err != nil {
-		http.Redirect(w, r, "/operators?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+	type catItem struct {
+		Key, Name, Kind, Collection, OpenPath string
+		Subscribed                            bool
+		Subscribers                           int
+	}
+	items := make([]catItem, 0, len(sets))
+	subscribed := 0
+	for _, d := range sets {
+		open := "/datasets/" + d.Collection
+		if d.Kind == operators.KindPilots {
+			open = "/missions"
+		}
+		sub := d.AssignedToUser(me)
+		if sub {
+			subscribed++
+		}
+		items = append(items, catItem{
+			Key: d.Key, Name: d.Name, Kind: d.Kind, Collection: d.Collection,
+			OpenPath: open, Subscribed: sub, Subscribers: len(d.AssignedTo),
+		})
+	}
+	s.render(w, r, "catalog.html", "Data sources", "catalog", map[string]any{
+		"Items":      items,
+		"MineCount":  subscribed,
+		"TotalCount": len(items),
+		"Error":      r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
+	me := s.operatorName(claimsOf(r))
+	if me == "" {
+		s.forbidden(w, r)
 		return
 	}
-	http.Redirect(w, r, "/operators", http.StatusSeeOther)
+	if err := s.operators.Subscribe(r.Context(), r.PathValue("key"), me); err != nil {
+		http.Redirect(w, r, "/catalog?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/catalog", http.StatusSeeOther)
+}
+
+func (s *Server) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	me := s.operatorName(claimsOf(r))
+	if me == "" {
+		s.forbidden(w, r)
+		return
+	}
+	if err := s.operators.Unsubscribe(r.Context(), r.PathValue("key"), me); err != nil {
+		http.Redirect(w, r, "/catalog?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 }
 
 // --- pilots dataset (admin only) ---

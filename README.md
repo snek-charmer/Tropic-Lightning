@@ -124,6 +124,17 @@ The config is `{type, group_by (category/x), value_col (number), agg}`, stored
 per dataset in the operator registry and captured by saved views (so a view can
 pin a specific chart). Chart math lives in `internal/web/charts.go`.
 
+### Subscriptions (self-serve access)
+
+Access to a data source is **self-serve**: any authenticated user browses the
+catalog at `/catalog` and **subscribes** to the sources they work with.
+Subscribing is what grants access — the dataset then appears on their dashboard
+and they can open/visualize it; unsubscribing revokes it. There's no admin
+"assign datasets to users" step. Admins still create/delete data sources
+(under *Manage*) and register operator identities for the dashboard's
+*Viewing as* preview. Subscriptions are stored as the dataset's subscriber list
+in the peat mesh, so `canAccessDataset` = admin **or** subscribed.
+
 ### Saved views
 
 Filtering the same way every time you open a dataset gets old, so users can
@@ -241,7 +252,7 @@ cluster), not part of this package.
 
 ```bash
 # Build the image, then create the package (pulls the image from your daemon).
-docker build -t keycloak-portal:0.1.20 .
+docker build -t keycloak-portal:0.1.22 .
 zarf package create deploy/zarf --confirm
 
 # On the target cluster (must be `zarf init`-ed), deploy with your values:
@@ -274,7 +285,7 @@ and the UDS Operator takes over the wiring:
   node and Keycloak.
 
 ```bash
-docker build -t keycloak-portal:0.1.20 .
+docker build -t keycloak-portal:0.1.22 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \

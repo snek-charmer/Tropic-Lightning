@@ -1,0 +1,39 @@
+{{define "catalog.html"}}
+<div class="page-head">
+  <h1>Data sources</h1>
+  <p class="muted">Subscribe to the data sources you work with — they'll appear on your dashboard and you'll be able to open them. You're subscribed to {{.MineCount}} of {{.TotalCount}}.</p>
+</div>
+
+{{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
+
+<div class="card">
+  {{if .Items}}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Type</th><th>Subscribers</th><th></th></tr></thead>
+      <tbody>
+        {{range .Items}}
+        <tr>
+          <td><strong>{{.Name}}</strong>{{if .Subscribed}} <span class="pill green">subscribed</span>{{end}}</td>
+          <td><span class="pill gray">{{.Kind}}</span></td>
+          <td class="muted">{{.Subscribers}}</td>
+          <td style="text-align:right;">
+            <div style="display:inline-flex; gap:.4rem; align-items:center;">
+              {{if .Subscribed}}
+                <a class="btn sm ghost" href="{{.OpenPath}}">Open</a>
+                <form method="POST" action="/catalog/{{.Key}}/unsubscribe" style="display:inline;"><button class="btn sm subtle" type="submit">Unsubscribe</button></form>
+              {{else}}
+                <form method="POST" action="/catalog/{{.Key}}/subscribe" style="display:inline;"><button class="btn sm" type="submit">Subscribe</button></form>
+              {{end}}
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+    <div class="empty">No data sources yet. An admin adds them under <em>Manage sources</em>.</div>
+  {{end}}
+</div>
+{{end}}

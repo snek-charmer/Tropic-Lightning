@@ -637,10 +637,10 @@ func TestDashboardAdminViewSelector(t *testing.T) {
 	if !strings.Contains(body, "Viewing as") || !strings.Contains(body, "Data sources →") {
 		t.Error("admin dashboard should show the view selector and admin card")
 	}
-	// Operator preview shows the "Your datasets" card, not the admin cards.
+	// Operator preview shows the "Your data sources" card, not the admin cards.
 	op := get("?view=operator")
-	if !strings.Contains(op, "Your datasets") {
-		t.Error("operator view should show the 'Your datasets' card")
+	if !strings.Contains(op, "Your data sources") {
+		t.Error("operator view should show the 'Your data sources' card")
 	}
 	if strings.Contains(op, "Data sources →") {
 		t.Error("operator view should NOT show the admin data-source card")
@@ -655,8 +655,8 @@ func TestDashboardAdminViewSelector(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "View as") {
 		t.Error("non-admin should not see the view selector")
 	}
-	if !strings.Contains(rec.Body.String(), "Your datasets") {
-		t.Error("non-admin dashboard should show the operator 'Your datasets' card")
+	if !strings.Contains(rec.Body.String(), "Your data sources") {
+		t.Error("non-admin dashboard should show the operator 'Your data sources' card")
 	}
 }
 
@@ -792,12 +792,12 @@ func TestAdminPreviewSpecificOperator(t *testing.T) {
 	}
 }
 
-func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
+func TestCatalogReconcilesUploadedDatasets(t *testing.T) {
 	kc := authtest.NewKeycloak(t)
 	defer kc.Close()
 	ctx := context.Background()
 	ds := datasource.NewService(datasource.NewMemoryStore())
-	// A dataset imported before the assignment registry existed: only a catalog entry.
+	// A dataset present only as a catalog entry (dataset:// endpoint).
 	_, _ = ds.Create(ctx, datasource.Input{Name: "Roster", Type: "file", Endpoint: "dataset://ds_roster", Enabled: true})
 	ops := operators.NewService(operators.NewMemoryStore())
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
@@ -808,17 +808,67 @@ func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
 	}
 	h := srv.Routes()
 
-	adminTok := kc.SignToken(t, map[string]any{"preferred_username": "alice", "groups": []string{"/UDS Core/Admin"}})
-	req := httptest.NewRequest(http.MethodGet, "/operators", nil)
-	req.Header.Set("Authorization", "Bearer "+adminTok)
+	// Any authenticated user sees it in the catalog with a subscribe control.
+	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "/datasets/ds_roster/assign") {
-		t.Error("operators page should list the uploaded dataset as assignable after reconcile")
+	if !strings.Contains(body, "/catalog/ds_roster/subscribe") || !strings.Contains(body, "Roster") {
+		t.Error("catalog should list the uploaded dataset with a subscribe control after reconcile")
+	}
+}
+
+func TestSelfSubscribeGrantsAccess(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_roster", "Roster", []string{"name"})
+	_ = dstore.PutRow(ctx, "ds_roster", "r1", map[string]string{"name": "Alice"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil, nil)
+	h := srv.Routes()
+	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	req := func(method, target string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, target, nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// Before subscribing: no access to the data.
+	if rec := req(http.MethodGet, "/datasets/ds_roster"); rec.Code != http.StatusForbidden {
+		t.Fatalf("pre-subscribe view = %d, want 403", rec.Code)
+	}
+	// Self-subscribe.
+	if rec := req(http.MethodPost, "/catalog/ds_roster/subscribe"); rec.Code != http.StatusSeeOther {
+		t.Fatalf("subscribe = %d", rec.Code)
+	}
+	if !ops.IsAssigned(ctx, "ds_roster", "s1") {
+		t.Fatal("s1 should be subscribed after subscribing")
+	}
+	// Now access is granted, and it appears on the dashboard.
+	if rec := req(http.MethodGet, "/datasets/ds_roster"); rec.Code != http.StatusOK {
+		t.Errorf("post-subscribe view = %d, want 200", rec.Code)
+	}
+	if rec := req(http.MethodGet, "/dashboard"); !strings.Contains(rec.Body.String(), "Roster") {
+		t.Error("subscribed dataset should appear on the dashboard")
+	}
+	// Unsubscribe revokes access again.
+	if rec := req(http.MethodPost, "/catalog/ds_roster/unsubscribe"); rec.Code != http.StatusSeeOther {
+		t.Fatalf("unsubscribe = %d", rec.Code)
+	}
+	if rec := req(http.MethodGet, "/datasets/ds_roster"); rec.Code != http.StatusForbidden {
+		t.Errorf("post-unsubscribe view = %d, want 403", rec.Code)
 	}
 }
 

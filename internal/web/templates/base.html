@@ -109,12 +109,13 @@
       {{if .Username}}
       <nav class="nav-links">
         <a href="/dashboard" class="{{if eq .Nav "dashboard"}}active{{end}}">Dashboard</a>
+        <a href="/catalog" class="{{if eq .Nav "catalog"}}active{{end}}">Data sources</a>
+        <a href="/missions" class="{{if eq .Nav "missions"}}active{{end}}">Missions</a>
         {{if .IsAdmin}}
-        <a href="/datasources" class="{{if eq .Nav "datasources"}}active{{end}}">Data sources</a>
+        <a href="/datasources" class="{{if eq .Nav "datasources"}}active{{end}}">Manage</a>
         <a href="/operators" class="{{if eq .Nav "operators"}}active{{end}}">Operators</a>
         <a href="/pilots" class="{{if eq .Nav "pilots"}}active{{end}}">Pilots</a>
         {{end}}
-        <a href="/missions" class="{{if eq .Nav "missions"}}active{{end}}">Missions</a>
       </nav>
       <div class="nav-right">
         <span class="mesh" title="peat mesh connection"><span id="mesh-dot" class="dot unknown"></span><span id="mesh-text" class="mesh-text">checking…</span></span>
