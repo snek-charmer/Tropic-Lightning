@@ -115,6 +115,15 @@ the assigned operator:
   generalizes the pilots readiness wheel to any dataset (weather condition,
   status, base, …). View config is stored per dataset in the operator registry.
 
+### Saved views
+
+Filtering the same way every time you open a dataset gets old, so users can
+**save a named view** — the current filter (column/value/search) plus the
+visualization (table vs status wheel + group-by). Pick a saved view to re-apply
+it; mark one as **default** and it auto-applies whenever you open that dataset
+(use *All rows* to bypass it). Views are **private to each user** and stored in
+the peat mesh (`internal/views/`), so they travel with the edge node.
+
 ## Configuration
 
 Copy `.env.example` and set the values, then export them (or use a tool like
@@ -223,7 +232,7 @@ cluster), not part of this package.
 
 ```bash
 # Build the image, then create the package (pulls the image from your daemon).
-docker build -t keycloak-portal:0.1.17 .
+docker build -t keycloak-portal:0.1.18 .
 zarf package create deploy/zarf --confirm
 
 # On the target cluster (must be `zarf init`-ed), deploy with your values:
@@ -256,7 +265,7 @@ and the UDS Operator takes over the wiring:
   node and Keycloak.
 
 ```bash
-docker build -t keycloak-portal:0.1.17 .
+docker build -t keycloak-portal:0.1.18 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \

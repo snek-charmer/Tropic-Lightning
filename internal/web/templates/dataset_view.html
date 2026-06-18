@@ -29,6 +29,55 @@
 
 {{if .Imported}}<div class="banner ok">Imported {{.Imported}} rows into the peat mesh.{{if .Capped}} (file had {{.Capped}}; capped to {{.Imported}}){{end}}</div>{{end}}
 {{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
+
+{{if .HasViews}}
+<div class="card tight">
+  <div class="toolbar" style="gap:.5rem;">
+    <strong style="font-size:.9rem;">Saved views</strong>
+    {{range .SavedViews}}
+      <a class="btn sm {{if not .Active}}subtle{{end}}" href="/datasets/{{$coll}}?{{.Query}}">{{if .Default}}★ {{end}}{{.Name}}</a>
+    {{end}}
+    {{if .SavedViews}}<a class="btn sm subtle" href="/datasets/{{$coll}}?view=none">All rows</a>{{end}}
+    <span class="spacer"></span>
+    <button class="btn ghost sm" type="button" onclick="var s=document.getElementById('saveview'); s.hidden=!s.hidden;">+ Save current view</button>
+  </div>
+  {{if not .SavedViews}}<p class="muted" style="margin:.5rem 0 0; font-size:.85rem;">No saved views yet. Filter/visualize the data the way you like, then <strong>Save current view</strong> — set one as default and it opens automatically next time.</p>{{end}}
+
+  <div id="saveview" hidden style="margin-top:.75rem; border-top:1px solid var(--border); padding-top:.75rem;">
+    <form method="POST" action="/datasets/{{$coll}}/views" class="inline-fields">
+      <input type="hidden" name="col" value="{{.FilterCol}}">
+      <input type="hidden" name="val" value="{{.FilterVal}}">
+      <input type="hidden" name="q" value="{{.FilterQuery}}">
+      <input type="hidden" name="vtype" value="{{.ViewType}}">
+      <input type="hidden" name="vgroup" value="{{.ViewGroupBy}}">
+      <div class="field"><label>View name</label><input type="text" name="name" placeholder="e.g. Grounded at Hill AFB" required></div>
+      <div class="field"><label class="check"><input type="checkbox" name="default"> Make default (auto-open)</label></div>
+      <div class="field"><button class="btn sm" type="submit">Save view</button></div>
+    </form>
+    <p class="muted" style="font-size:.8rem; margin:.4rem 0 0;">Captures the current filter and {{if eq .ViewType "wheel"}}status-wheel{{else}}table{{end}} display.</p>
+  </div>
+
+  {{if .SavedViews}}
+  <details style="margin-top:.6rem;"><summary class="muted" style="cursor:pointer; font-size:.82rem;">Manage views</summary>
+    <table style="margin-top:.5rem; width:auto;"><tbody>
+    {{range .SavedViews}}
+      <tr>
+        <td style="border:none; padding:.25rem .5rem;">{{if .Default}}<span class="pill accent">default</span> {{end}}{{.Name}}</td>
+        <td style="border:none; padding:.25rem .5rem; text-align:right;">
+          {{if .Default}}
+            <form method="POST" action="/datasets/{{$coll}}/views/{{.ID}}/default" style="display:inline;"><input type="hidden" name="default" value="off"><button class="btn subtle sm" type="submit">Unset default</button></form>
+          {{else}}
+            <form method="POST" action="/datasets/{{$coll}}/views/{{.ID}}/default" style="display:inline;"><button class="btn subtle sm" type="submit">Make default</button></form>
+          {{end}}
+          <form method="POST" action="/datasets/{{$coll}}/views/{{.ID}}/delete" style="display:inline;" onsubmit="return confirm('Delete view {{.Name}}?');"><button class="btn danger sm" type="submit">Delete</button></form>
+        </td>
+      </tr>
+    {{end}}
+    </tbody></table>
+  </details>
+  {{end}}
+</div>
+{{end}}
 {{if .LiveConnector}}<div class="banner info">This dataset is backed by a live connector — refreshing replaces the snapshot, so manual row edits are overwritten on refresh.</div>{{end}}
 
 {{if and (eq .ViewType "wheel") .WheelSegments}}
@@ -59,13 +108,16 @@
 <details class="card tight" {{if .FilterActive}}open{{end}}>
   <summary style="cursor:pointer; font-weight:600;">Filter {{if .FilterActive}}<span class="pill accent">active</span>{{end}}</summary>
   <form method="GET" action="/datasets/{{$coll}}" class="inline-fields" style="margin-top:1rem;">
+    {{/* keep the current display when filtering */}}
+    <input type="hidden" name="vtype" value="{{.ViewType}}">
+    <input type="hidden" name="vgroup" value="{{.ViewGroupBy}}">
     <div class="field"><label>Column</label>
       <select name="col" style="width:auto;"><option value="">—</option>{{$fc := .FilterCol}}{{range .Columns}}<option value="{{.}}" {{if eq $fc .}}selected{{end}}>{{.}}</option>{{end}}</select>
     </div>
     <div class="field"><label>Value contains</label><input type="text" name="val" value="{{.FilterVal}}"></div>
     <div class="field"><label>Search (any column)</label><input type="text" name="q" value="{{.FilterQuery}}"></div>
     <div class="field"><button class="btn" type="submit">Apply</button></div>
-    {{if .FilterActive}}<div class="field"><a class="btn subtle" href="/datasets/{{$coll}}">Clear</a></div>{{end}}
+    {{if .FilterActive}}<div class="field"><a class="btn subtle" href="/datasets/{{$coll}}?view=none">Clear</a></div>{{end}}
   </form>
 </details>
 
