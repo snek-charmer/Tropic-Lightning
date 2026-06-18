@@ -100,7 +100,14 @@
       "Bash(perl -0pi -e 's/\\\\ttok, err := h\\\\.Put\\\\\\(Parsed\\\\{Filename: \"a\\\\.csv\", Columns: \\\\[\\\\]string\\\\{\"x\"\\\\}\\\\}\\\\\\)/\\\\ttok, err := h.Put\\(\"a.csv\", []byte\\(\"x\\\\\\\\n1\\\\\\\\n\"\\)\\)/' internal/dataset/dataset_test.go)",
       "Bash(perl -0pi -e 's/if _, ok := h\\\\.Get\\\\\\(tok\\\\\\); !ok \\\\{/if _, _, ok := h.Get\\(tok\\); !ok {/' internal/dataset/dataset_test.go)",
       "Bash(perl -0pi -e 's/if _, ok := h\\\\.Get\\\\\\(tok\\\\\\); ok \\\\{/if _, _, ok := h.Get\\(tok\\); ok {/' internal/dataset/dataset_test.go)",
-      "Bash(gofmt -w internal/dataset/dataset_test.go)"
+      "Bash(gofmt -w internal/dataset/dataset_test.go)",
+      "Bash(curl -sS -i --max-time 20 \"http://tle.ivanstanojevic.me/api/tle/\")",
+      "Bash(curl -sS -i --max-time 20 \"https://tle.ivanstanojevic.me/api/tle/\")",
+      "Bash(curl -sS -L --max-time 40 -A \"keycloak-portal/1.0\" \"https://tle.ivanstanojevic.me/api/tle/?page-size=2\")",
+      "Bash(curl -sS --max-time 15 -o /dev/null -w \"%{http_code}\\\\n\" https://api.github.com)",
+      "Bash(sed -i 's#\\\\t\"net/http/httptest\"\\\\n#&#' internal/httpsource/httpsource_test.go)",
+      "Bash(perl -0pi -e 's#\\\\t\"net/http/httptest\"\\\\n\\\\t\"testing\"#\\\\t\"net/http/httptest\"\\\\n\\\\t\"strings\"\\\\n\\\\t\"testing\"#' internal/httpsource/httpsource_test.go)",
+      "Bash(gofmt -w internal/httpsource/httpsource_test.go)"
     ]
   }
 }

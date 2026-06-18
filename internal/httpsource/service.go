@@ -1,9 +1,11 @@
 package httpsource
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -16,6 +18,9 @@ import (
 
 // maxRows caps how many records a single fetch ingests (each row is a peat write).
 const maxRows = 2000
+
+// maxBodyBytes caps how much of a response we read into memory.
+const maxBodyBytes = 32 << 20 // 32 MiB
 
 // DatasetWriter is the slice of the dataset store the connector needs. It writes
 // a fresh snapshot each refresh (write by index, delete surplus rows).
@@ -162,7 +167,8 @@ func (s *Service) fetch(ctx context.Context, c Connector) ([]map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "application/json, application/ld+json")
+	req.Header.Set("User-Agent", "keycloak-portal/1.0")
 	switch c.AuthType {
 	case AuthHeader:
 		req.Header.Set(c.HeaderName, c.AuthValue)
@@ -172,14 +178,29 @@ func (s *Service) fetch(ctx context.Context, c Connector) ([]map[string]any, err
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		// A transport-level EOF/reset is cryptic; the usual cause is an http://
+		// URL that redirects to https or is blocked on port 80 by egress policy.
+		if strings.HasPrefix(c.URL, "http://") {
+			return nil, fmt.Errorf("%w — try an https:// URL (http often redirects or is blocked on port 80)", err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("API returned %d", resp.StatusCode)
 	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 {
+		return nil, fmt.Errorf("the API returned an empty response (status %d, %s)", resp.StatusCode, resp.Header.Get("Content-Type"))
+	} else if trimmed[0] == '<' {
+		return nil, fmt.Errorf("the API returned %s, not JSON — check the URL", firstNonEmpty(resp.Header.Get("Content-Type"), "HTML/XML"))
+	}
 	var body any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(raw, &body); err != nil {
 		return nil, fmt.Errorf("decoding JSON: %w", err)
 	}
 	arr, err := navigate(body, c.RecordPath)
@@ -256,6 +277,16 @@ func (s *Service) write(ctx context.Context, c Connector, recs []map[string]any)
 		}
 	}
 	return nil
+}
+
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // columns returns the sorted union of top-level keys across records.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
@@ -143,5 +144,28 @@ func TestNavigateAndStringify(t *testing.T) {
 	}
 	if got := stringify(map[string]any{"x": 1.0}); got != `{"x":1}` {
 		t.Errorf("stringify object = %q", got)
+	}
+}
+
+func TestHTMLResponseGivesClearError(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>Moved</body></html>"))
+	}))
+	defer api.Close()
+	svc := NewService(NewMemoryStore(), dataset.NewMemoryStore(), nil)
+	_, err := svc.CreateConnector(context.Background(), Input{Name: "x", URL: api.URL})
+	if err == nil || !strings.Contains(err.Error(), "not JSON") {
+		t.Errorf("want a 'not JSON' error, got %v", err)
+	}
+}
+
+func TestEmptyResponseGivesClearError(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer api.Close()
+	svc := NewService(NewMemoryStore(), dataset.NewMemoryStore(), nil)
+	_, err := svc.CreateConnector(context.Background(), Input{Name: "x", URL: api.URL})
+	if err == nil || !strings.Contains(err.Error(), "empty response") {
+		t.Errorf("want an 'empty response' error, got %v", err)
 	}
 }
