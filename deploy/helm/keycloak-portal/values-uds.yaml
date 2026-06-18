@@ -9,7 +9,7 @@
 
 image:
   repository: keycloak-portal
-  tag: "0.1.20"
+  tag: "0.1.21"
 
 uds:
   enabled: true

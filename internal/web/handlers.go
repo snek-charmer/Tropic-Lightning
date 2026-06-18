@@ -977,14 +977,54 @@ func (s *Server) datasetView(ctx context.Context, collection string) operators.V
 // handleDatasetSetView updates how a dataset is visualized (admins + assigned
 // operators), then returns to the viewer.
 func (s *Server) handleDatasetSetView(w http.ResponseWriter, r *http.Request) {
-	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
-		return s.operators.SetView(ctx, c, operators.ViewConfig{
-			Type:     r.PostFormValue("type"),
-			GroupBy:  r.PostFormValue("group_by"),
-			ValueCol: r.PostFormValue("value_col"),
-			Agg:      r.PostFormValue("agg"),
-		})
-	})
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) {
+		s.forbidden(w, r)
+		return
+	}
+	_ = r.ParseForm()
+	vc := operators.ViewConfig{
+		Type:     r.PostFormValue("type"),
+		GroupBy:  r.PostFormValue("group_by"),
+		ValueCol: r.PostFormValue("value_col"),
+		Agg:      r.PostFormValue("agg"),
+	}
+	dest := "/datasets/" + collection + "?" + viewRedirectQuery(r, vc)
+	if err := s.operators.SetView(r.Context(), collection, vc); err != nil {
+		http.Redirect(w, r, dest+"&error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	// Redirect with the chosen visualization as an explicit override (preserving
+	// any active filter) so the selection is shown immediately — otherwise a
+	// stale vtype carried in the form's action query would mask the change.
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// viewRedirectQuery preserves the active filter (col/val/q from the action
+// query) and applies the chosen visualization as an override.
+func viewRedirectQuery(r *http.Request, vc operators.ViewConfig) string {
+	q := url.Values{}
+	src := r.URL.Query()
+	for _, k := range []string{"col", "val", "q"} {
+		if v := src.Get(k); v != "" {
+			q.Set(k, v)
+		}
+	}
+	vt := strings.TrimSpace(vc.Type)
+	if vt == "" {
+		vt = "table"
+	}
+	q.Set("vtype", vt) // always set (incl. table) so it overrides any stale value
+	if vc.GroupBy != "" {
+		q.Set("vgroup", vc.GroupBy)
+	}
+	if vc.ValueCol != "" {
+		q.Set("vval", vc.ValueCol)
+	}
+	if vc.Agg != "" {
+		q.Set("vagg", vc.Agg)
+	}
+	return q.Encode()
 }
 
 // wheelSegment is one slice of a status wheel: a distinct value and its share.

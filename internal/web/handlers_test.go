@@ -1367,3 +1367,48 @@ func TestDatasetBarAndStats(t *testing.T) {
 		t.Errorf("line chart should render an SVG polyline")
 	}
 }
+
+// TestVizSwitchApplies guards the bug where selecting a new visualization didn't
+// change the display because a stale vtype override (carried in the form's
+// action query) masked the new selection.
+func TestVizSwitchApplies(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_r", "R", []string{"base"})
+	_ = dstore.PutRow(ctx, "ds_r", "r1", map[string]string{"base": "Hill"})
+	_ = dstore.PutRow(ctx, "ds_r", "r2", map[string]string{"base": "Hill"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_r", "R", operators.KindGeneric, "ds_r")
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	// Select "bar" while the page already carried a wheel override.
+	form := url.Values{"type": {"bar"}, "group_by": {"base"}, "agg": {"count"}}
+	pr := httptest.NewRequest(http.MethodPost, "/datasets/ds_r/view?vtype=wheel&vgroup=base", strings.NewReader(form.Encode()))
+	pr.Header.Set("Authorization", "Bearer "+tok)
+	pr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	prr := httptest.NewRecorder()
+	h.ServeHTTP(prr, pr)
+	loc := prr.Header().Get("Location")
+	if !strings.Contains(loc, "vtype=bar") || strings.Contains(loc, "vtype=wheel") {
+		t.Fatalf("redirect should apply the new viz (bar), got %q", loc)
+	}
+	// Following it renders the bar chart, not the wheel.
+	gr := httptest.NewRequest(http.MethodGet, loc, nil)
+	gr.Header.Set("Authorization", "Bearer "+tok)
+	grr := httptest.NewRecorder()
+	h.ServeHTTP(grr, gr)
+	body := grr.Body.String()
+	if !strings.Contains(body, "by base") || strings.Contains(body, "conic-gradient") {
+		t.Error("switched view should render the bar chart, not the wheel")
+	}
+}
