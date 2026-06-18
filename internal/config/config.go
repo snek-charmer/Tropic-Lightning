@@ -69,6 +69,10 @@ type Config struct {
 	// WeatherAPIURL overrides the Open-Meteo endpoint, e.g. to point at a
 	// self-hosted mirror in an air-gapped site. Empty uses the public API.
 	WeatherAPIURL string
+
+	// HTTPPollInterval is how often the background poller refreshes generic
+	// HTTP/JSON connectors when connected. 0 disables. Default 10m.
+	HTTPPollInterval time.Duration
 }
 
 // Load reads configuration from the environment and validates required fields.
@@ -89,6 +93,7 @@ func Load() (*Config, error) {
 		PeatTLS:               envOr("PEAT_TLS", "false") == "true",
 		WeatherPollInterval:   parseDurationOr("WEATHER_POLL_INTERVAL", 10*time.Minute),
 		WeatherAPIURL:         os.Getenv("WEATHER_API_URL"),
+		HTTPPollInterval:      parseDurationOr("HTTP_POLL_INTERVAL", 10*time.Minute),
 	}
 
 	var missing []string

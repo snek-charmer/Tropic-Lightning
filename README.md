@@ -84,6 +84,26 @@ like any other.
 - Lives in `internal/weather/` (connector config in peat; rows written through
   the dataset store). The API base URL is overridable for tests/mirrors.
 
+### Generic HTTP/JSON connector
+
+Any JSON HTTP endpoint can be a live source. An admin configures a **URL**, an
+optional **record path** (dot-path to the array, e.g. `data.items`; blank means
+the response is itself the array), and optional **auth** (none, a custom header
+like `X-API-Key`, or a bearer token). On create it fetches once to discover the
+schema (columns = the sorted union of record keys), then the background poller
+refreshes a **snapshot** on `HTTP_POLL_INTERVAL` (`10m` default; `0`/`off`
+disables). Operators can also **Refresh now** from the dataset view.
+
+- The dataset is assignable, filterable, and visualizable like any other.
+- A refresh **replaces** the snapshot (writes by index, deletes surplus rows),
+  so it reflects the source rather than accumulating — manual row edits on a
+  live dataset are overwritten on refresh.
+- Auth values are stored in the mesh with the connector config — use a
+  least-privilege, read-only credential.
+- Lives in `internal/httpsource/`. External egress reuses the
+  `uds.weather.egress` rule (external HTTPS on 443); non-443 endpoints need an
+  `uds.extraAllow` entry.
+
 ### Per-dataset visualizations
 
 Each dataset chooses how it's rendered, set from the dataset view by admins or
@@ -121,6 +141,7 @@ set -a && source .env && set +a
 | `PEAT_TLS`                      | no       | Dial the peat node over TLS (default `false`) |
 | `WEATHER_POLL_INTERVAL`         | no       | Live weather refresh cadence (default `10m`; `0`/`off` disables) |
 | `WEATHER_API_URL`               | no       | Override the Open-Meteo endpoint (e.g. an air-gapped mirror) |
+| `HTTP_POLL_INTERVAL`            | no       | HTTP/JSON connector refresh cadence (default `10m`; `0`/`off` disables) |
 
 ## Run
 
@@ -202,7 +223,7 @@ cluster), not part of this package.
 
 ```bash
 # Build the image, then create the package (pulls the image from your daemon).
-docker build -t keycloak-portal:0.1.14 .
+docker build -t keycloak-portal:0.1.15 .
 zarf package create deploy/zarf --confirm
 
 # On the target cluster (must be `zarf init`-ed), deploy with your values:
@@ -235,7 +256,7 @@ and the UDS Operator takes over the wiring:
   node and Keycloak.
 
 ```bash
-docker build -t keycloak-portal:0.1.14 .
+docker build -t keycloak-portal:0.1.15 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \

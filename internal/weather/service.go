@@ -115,6 +115,21 @@ func (s *Service) Poll(ctx context.Context) (int, error) {
 	return n, firstErr
 }
 
+// RefreshOne re-fetches a single connector by its collection. found is false if
+// no weather connector backs that collection (so callers can try other sources).
+func (s *Service) RefreshOne(ctx context.Context, collection string) (found bool, err error) {
+	conns, err := s.store.ListConnectors(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range conns {
+		if c.Collection == collection {
+			return true, s.refresh(ctx, c)
+		}
+	}
+	return false, nil
+}
+
 // current is the subset of the Open-Meteo response we read.
 type current struct {
 	Current struct {

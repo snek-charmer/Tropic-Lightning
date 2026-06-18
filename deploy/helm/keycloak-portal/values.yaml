@@ -60,6 +60,9 @@ config:
   # Override the Open-Meteo endpoint (e.g. a self-hosted mirror for air-gapped
   # sites). Empty uses the public api.open-meteo.com.
   weatherApiUrl: ""
+  # How often the background poller refreshes generic HTTP/JSON connectors when
+  # connected. "0" or "off" disables background polling.
+  httpPollInterval: "10m"
 
 # -- OIDC client secret handling.
 clientSecret:
@@ -119,8 +122,9 @@ uds:
     namespace: peat-system
     port: 50051
   weather:
-    # Allow egress to the external Open-Meteo weather API. Set false for a fully
-    # air-gapped site (and point config.weatherApiUrl at an in-cluster mirror).
+    # Allow egress to external HTTPS APIs (the Open-Meteo weather connector and
+    # generic HTTP/JSON connectors). Set false for a fully air-gapped site and
+    # point connectors at in-cluster mirrors. Non-443 endpoints need extraAllow.
     egress: true
     port: 443
   # Additional spec.network.allow rules appended verbatim.

@@ -28,3 +28,4 @@ data:
   {{- with .Values.config.weatherApiUrl }}
   WEATHER_API_URL: {{ . | quote }}
   {{- end }}
+  HTTP_POLL_INTERVAL: {{ .Values.config.httpPollInterval | quote }}

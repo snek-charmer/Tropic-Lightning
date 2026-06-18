@@ -111,6 +111,67 @@
   </div>
   {{end}}
 
+  {{if .HTTPEnabled}}
+  <div class="card">
+    <h2>Add a live API (HTTP/JSON) source</h2>
+    <p class="muted">Pulls records from any JSON HTTP endpoint into a dataset you can assign and visualize. The node refreshes it in the background when connected, and you can <strong>Refresh now</strong> from the dataset view.</p>
+    <form method="POST" action="/datasources/http">
+      <label for="apiname">Name</label>
+      <input type="text" id="apiname" name="name" placeholder="Asset tracker API" required>
+
+      <label for="url">URL</label>
+      <input type="text" id="url" name="url" placeholder="https://api.example.com/v1/assets" required>
+
+      <label for="record_path">Record path <span class="muted">(optional)</span></label>
+      <input type="text" id="record_path" name="record_path" placeholder="data.items — leave blank if the response is itself an array">
+
+      <div class="row">
+        <div>
+          <label for="auth_type">Auth</label>
+          <select id="auth_type" name="auth_type" onchange="onAuthChange()">
+            {{range .HTTPAuthTypes}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </div>
+        <div id="headerNameWrap" style="display:none;">
+          <label for="header_name">Header name</label>
+          <input type="text" id="header_name" name="header_name" placeholder="X-API-Key">
+        </div>
+      </div>
+
+      <div id="authValueWrap" style="display:none;">
+        <label for="auth_value">Key / token</label>
+        <input type="text" id="auth_value" name="auth_value" placeholder="value sent on each request" autocomplete="off">
+        <p class="muted" style="margin:.25rem 0 0; font-size:.8rem;">⚠ Stored in the peat mesh with the connector config. Use a least-privilege, read-only credential.</p>
+      </div>
+
+      <button class="btn" type="submit">Add API source</button>
+    </form>
+    {{if .HTTPConnectors}}
+    <table style="margin-top:1rem;">
+      <thead><tr><th>Name</th><th>URL</th><th>Auth</th><th></th></tr></thead>
+      <tbody>
+        {{range .HTTPConnectors}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td><code>{{.URL}}</code></td>
+          <td>{{.AuthType}}</td>
+          <td><a class="btn" href="/datasets/{{.Collection}}">View →</a></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </div>
+  <script>
+    function onAuthChange(){
+      var t = document.getElementById('auth_type').value;
+      document.getElementById('headerNameWrap').style.display = (t === 'header') ? '' : 'none';
+      document.getElementById('authValueWrap').style.display = (t === 'none') ? 'none' : '';
+    }
+    onAuthChange();
+  </script>
+  {{end}}
+
   <div class="card">
     <h2>Configured sources</h2>
     {{if .Sources}}

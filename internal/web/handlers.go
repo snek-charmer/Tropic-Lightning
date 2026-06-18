@@ -22,6 +22,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/weather"
@@ -47,11 +48,12 @@ type Server struct {
 	datasets    *dataset.Service
 	operators   *operators.Service
 	weather     *weather.Service
+	httpsource  *httpsource.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-// weather may be nil (no live connectors configured).
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service) (*Server, error) {
+// weather and httpsrc may be nil (no live connectors configured).
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service, httpsrc *httpsource.Service) (*Server, error) {
 	funcs := template.FuncMap{
 		"hasPrefix":  strings.HasPrefix,
 		"trimPrefix": strings.TrimPrefix,
@@ -60,7 +62,7 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets, operators: ops, weather: wx}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets, operators: ops, weather: wx, httpsource: httpsrc}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -108,6 +110,8 @@ func (s *Server) Routes() http.Handler {
 
 	// Live weather connector (Open-Meteo): admin configures locations.
 	mux.Handle("POST /datasources/weather", admin(s.handleWeatherCreate))
+	// Generic HTTP/JSON connector: admin configures URL + record path + auth.
+	mux.Handle("POST /datasources/http", admin(s.handleHTTPSourceCreate))
 
 	// Pilots import/manage (admin-only).
 	mux.Handle("GET /pilots", admin(s.handlePilotsPage))
@@ -132,6 +136,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /datasets/{collection}/bulk", authed(s.handleDatasetBulkSave))
 	// Per-dataset visualization config (table | wheel).
 	mux.Handle("POST /datasets/{collection}/view", authed(s.handleDatasetSetView))
+	// Manual refresh of a live connector backing this dataset (weather | http).
+	mux.Handle("POST /datasets/{collection}/refresh", authed(s.handleDatasetRefresh))
 	mux.Handle("GET /missions", authed(s.handleMissions))
 	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
 	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
@@ -365,6 +371,10 @@ func (s *Server) handleDataSourcesPage(w http.ResponseWriter, r *http.Request) {
 	if s.weather != nil {
 		wxConnectors, _ = s.weather.ListConnectors(r.Context())
 	}
+	var httpConnectors []httpsource.Connector
+	if s.httpsource != nil {
+		httpConnectors, _ = s.httpsource.ListConnectors(r.Context())
+	}
 	s.render(w, "datasources.html", map[string]any{
 		"Sources":           sources,
 		"KnownTypes":        datasource.KnownTypes,
@@ -374,6 +384,9 @@ func (s *Server) handleDataSourcesPage(w http.ResponseWriter, r *http.Request) {
 		"MeshReachable":     statusErr == nil,
 		"WeatherEnabled":    s.weather != nil,
 		"WeatherConnectors": wxConnectors,
+		"HTTPEnabled":       s.httpsource != nil,
+		"HTTPConnectors":    httpConnectors,
+		"HTTPAuthTypes":     httpsource.AuthTypes(),
 	})
 }
 
@@ -613,6 +626,68 @@ func parseLocations(raw string) ([]weather.Location, error) {
 	return out, nil
 }
 
+// handleHTTPSourceCreate configures a generic HTTP/JSON connector, fetches a
+// first snapshot, registers it as an assignable dataset, and opens it.
+func (s *Server) handleHTTPSourceCreate(w http.ResponseWriter, r *http.Request) {
+	fail := func(msg string) {
+		http.Redirect(w, r, "/datasources?error="+url.QueryEscape(msg), http.StatusSeeOther)
+	}
+	if s.httpsource == nil {
+		fail("HTTP connector is not configured on this deployment")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		fail("invalid form")
+		return
+	}
+	// Bound the create (it does a live fetch) so a slow API can't hang the request.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	c, err := s.httpsource.CreateConnector(ctx, httpsource.Input{
+		Name:       r.PostFormValue("name"),
+		URL:        r.PostFormValue("url"),
+		RecordPath: r.PostFormValue("record_path"),
+		AuthType:   r.PostFormValue("auth_type"),
+		HeaderName: r.PostFormValue("header_name"),
+		AuthValue:  r.PostFormValue("auth_value"),
+	})
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	if err := s.operators.RegisterDataset(r.Context(), c.Collection, c.Name, operators.KindGeneric, c.Collection); err != nil {
+		slog.Warn("register http dataset", "err", err)
+	}
+	if _, err := s.dataSources.Create(r.Context(), datasource.Input{
+		Name: c.Name, Type: "http", Endpoint: "dataset://" + c.Collection, Enabled: true,
+	}); err != nil {
+		slog.Warn("register http catalog entry", "err", err)
+	}
+	http.Redirect(w, r, "/datasets/"+c.Collection, http.StatusSeeOther)
+}
+
+// handleDatasetRefresh re-pulls a live connector (weather or HTTP/JSON) backing
+// this dataset, then returns to the viewer. No-op for plain uploaded datasets.
+func (s *Server) handleDatasetRefresh(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		if s.weather != nil {
+			if found, err := s.weather.RefreshOne(ctx, c); err != nil {
+				return err
+			} else if found {
+				return nil
+			}
+		}
+		if s.httpsource != nil {
+			if found, err := s.httpsource.RefreshOne(ctx, c); err != nil {
+				return err
+			} else if found {
+				return nil
+			}
+		}
+		return fmt.Errorf("this dataset has no live connector to refresh")
+	})
+}
+
 // handleDatasetView renders an ingested dataset's rows (kept columns).
 func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
@@ -676,6 +751,9 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		"WheelSegments": segments,
 		"WheelGradient": gradient,
 		"IsAdmin":       s.auth.IsAdmin(claimsOf(r)),
+		// wx_ (weather) and api_ (HTTP/JSON) datasets are backed by a live
+		// connector and can be re-pulled on demand.
+		"LiveConnector": strings.HasPrefix(collection, "wx_") || strings.HasPrefix(collection, "api_"),
 	})
 }
 
