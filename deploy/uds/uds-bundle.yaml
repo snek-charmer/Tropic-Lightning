@@ -26,8 +26,12 @@ packages:
           variables:
             - name: PORTAL_HOST
               path: uds.expose.host
-              description: "External hostname for the portal (also derives redirect URLs)"
-              default: "portal.uds.dev"
+              description: "Portal subdomain ONLY (UDS appends the domain). e.g. 'portal' => portal.<domain>"
+              default: "portal"
+            - name: DOMAIN
+              path: uds.expose.domain
+              description: "Cluster domain UDS appends to the host; used to build the OIDC redirect URLs"
+              default: "uds.dev"
             - name: GATEWAY
               path: uds.expose.gateway
               description: "UDS gateway: tenant | admin | passthrough"

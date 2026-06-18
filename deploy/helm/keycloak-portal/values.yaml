@@ -69,8 +69,16 @@ service:
 uds:
   enabled: false
   expose:
-    # Full external hostname for the portal (also used to derive redirect URLs).
-    host: "portal.uds.dev"
+    # Subdomain ONLY — UDS appends the cluster domain (host "portal" + domain
+    # "uds.dev" => portal.uds.dev). Do NOT include the domain here, or it gets
+    # appended twice (portal.uds.dev.uds.dev).
+    host: "portal"
+    # Cluster domain UDS appends to the host. Used to build the full external URL
+    # for the OIDC redirect URIs (the expose host itself only takes the subdomain).
+    domain: "uds.dev"
+    # Optional: set the full external host explicitly (overrides host + domain),
+    # e.g. for the admin gateway: "portal.admin.uds.dev".
+    fullHost: ""
     # UDS gateway: tenant | admin | passthrough.
     gateway: tenant
   sso:

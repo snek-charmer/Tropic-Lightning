@@ -38,7 +38,7 @@ spec:
       clientId: {{ .Values.config.clientId | quote }}
       standardFlowEnabled: true
       redirectUris:
-        - {{ printf "https://%s/auth/callback" .Values.uds.expose.host | quote }}
+        - {{ printf "https://%s/auth/callback" (include "keycloak-portal.udsFullHost" .) | quote }}
       {{- with .Values.uds.sso.groups }}
       groups:
         anyOf:
