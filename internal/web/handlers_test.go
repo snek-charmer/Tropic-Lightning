@@ -817,3 +817,57 @@ func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
 		t.Error("operators page should list the uploaded dataset as assignable after reconcile")
 	}
 }
+
+func TestOperatorCanEditAssignedDataset(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_roster", "Roster", []string{"name"})
+	_ = dstore.PutRow(ctx, "ds_roster", "r000001", map[string]string{"name": "Alice"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
+	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil), dsvc, ops)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := kc.SignToken(t, map[string]any{"preferred_username": "s4", "realm_access": map[string]any{"roles": []string{"user"}}})
+
+	post := func(path string, form url.Values) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	// Add column + row as the assigned operator.
+	if code := post("/datasets/ds_roster/columns/add", url.Values{"name": {"base"}}); code != http.StatusSeeOther {
+		t.Fatalf("add column = %d", code)
+	}
+	if code := post("/datasets/ds_roster/rows/add", url.Values{"f_name": {"Bob"}, "f_base": {"Nellis"}}); code != http.StatusSeeOther {
+		t.Fatalf("add row = %d", code)
+	}
+	_, cols, rows, _ := dsvc.View(ctx, "ds_roster")
+	if len(cols) != 2 || len(rows) != 2 {
+		t.Fatalf("after edits: cols=%v rows=%d", cols, len(rows))
+	}
+
+	// An UNassigned operator cannot edit.
+	tok2 := kc.SignToken(t, map[string]any{"preferred_username": "nobody", "realm_access": map[string]any{"roles": []string{"user"}}})
+	req := httptest.NewRequest(http.MethodPost, "/datasets/ds_roster/columns/add", strings.NewReader("name=x"))
+	req.Header.Set("Authorization", "Bearer "+tok2)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("unassigned edit = %d, want 403", rec.Code)
+	}
+}

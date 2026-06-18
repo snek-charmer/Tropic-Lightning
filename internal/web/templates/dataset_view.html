@@ -44,23 +44,58 @@
   </div>
 
   <div class="card">
+    <h2 style="margin-top:0;">Edit</h2>
+    <form method="POST" action="/datasets/{{.Collection}}/columns/add" style="display:inline-flex; gap:.4rem; align-items:center; margin-right:1rem;">
+      <input type="text" name="name" placeholder="new column name" style="padding:.3rem; border:1px solid #ccc; border-radius:6px;">
+      <button type="submit" style="background:#4636f5;color:#fff;border:none;padding:.35rem .8rem;border-radius:6px;font:inherit;cursor:pointer;">+ Column</button>
+    </form>
+    <span class="muted">Add/delete columns and rows below. Changes save to the peat mesh.</span>
+  </div>
+
+  <div class="card">
     <p class="muted">{{len .Columns}} columns · {{.Total}}{{if .FilterActive}} matching of {{.GrandTotal}}{{end}} rows{{if lt .Shown .Total}} (showing first {{.Shown}}){{end}} · stored as a peat dataset.</p>
-    {{if .Rows}}
+    <form method="POST" action="/datasets/{{.Collection}}/rows/add" id="addrow"></form>
     <div class="wrap">
     <table>
-      <thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
+      <thead>
+        <tr>
+          {{$coll := .Collection}}
+          {{range .Columns}}
+          <th>
+            {{.}}
+            <form method="POST" action="/datasets/{{$coll}}/columns/delete" style="display:inline;" onsubmit="return confirm('Delete column {{.}}? This removes its values.');">
+              <input type="hidden" name="name" value="{{.}}">
+              <button type="submit" title="delete column" style="border:none;background:none;color:#d63031;cursor:pointer;font-weight:700;">×</button>
+            </form>
+          </th>
+          {{end}}
+          <th></th>
+        </tr>
+      </thead>
       <tbody>
         {{$cols := .Columns}}
         {{range .Rows}}
         {{$row := .}}
-        <tr>{{range $cols}}<td>{{index $row .}}</td>{{end}}</tr>
+        <tr>
+          {{range $cols}}<td>{{index $row.Fields .}}</td>{{end}}
+          <td>
+            <form method="POST" action="/datasets/{{$coll}}/rows/delete" style="display:inline;" onsubmit="return confirm('Delete this row?');">
+              <input type="hidden" name="id" value="{{$row.ID}}">
+              <button type="submit" style="background:#fff;color:#d63031;border:1px solid #d63031;border-radius:6px;padding:.15rem .5rem;font:inherit;font-size:.78rem;cursor:pointer;">Delete</button>
+            </form>
+          </td>
+        </tr>
+        {{end}}
+        {{if .Columns}}
+        <tr>
+          {{range .Columns}}<td><input form="addrow" type="text" name="f_{{.}}" placeholder="{{.}}" style="width:100%; box-sizing:border-box; padding:.25rem; border:1px solid #ccc; border-radius:4px;"></td>{{end}}
+          <td><button form="addrow" type="submit" style="background:#1c9d52;color:#fff;border:none;border-radius:6px;padding:.2rem .6rem;font:inherit;font-size:.78rem;cursor:pointer;">+ Add</button></td>
+        </tr>
         {{end}}
       </tbody>
     </table>
     </div>
-    {{else}}
-      <p class="muted">No rows.</p>
-    {{end}}
+    {{if not .Rows}}<p class="muted">No rows yet — add one above.</p>{{end}}
   </div>
 </body>
 </html>{{end}}

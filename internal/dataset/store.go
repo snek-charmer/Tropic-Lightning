@@ -27,8 +27,15 @@ type metaDoc struct {
 type Store interface {
 	PutMeta(ctx context.Context, collection, name string, cols []string) error
 	PutRow(ctx context.Context, collection, id string, fields map[string]string) error
+	DeleteRow(ctx context.Context, collection, id string) error
 	Meta(ctx context.Context, collection string) (name string, cols []string, err error)
-	ListRows(ctx context.Context, collection string) ([]map[string]string, error)
+	ListRows(ctx context.Context, collection string) ([]Row, error)
+}
+
+// Row is a dataset row with its document ID (needed for edits/deletes).
+type Row struct {
+	ID     string
+	Fields map[string]string
 }
 
 // PeatStore writes datasets to the peat mesh via the PeatSidecar gRPC API.
@@ -91,7 +98,15 @@ func (s *PeatStore) Meta(ctx context.Context, collection string) (string, []stri
 	return m.Name, m.Columns, nil
 }
 
-func (s *PeatStore) ListRows(ctx context.Context, collection string) ([]map[string]string, error) {
+func (s *PeatStore) DeleteRow(ctx context.Context, collection, id string) error {
+	_, err := s.client.DeleteDocument(ctx, &sidecarv1.DeleteDocumentRequest{Collection: collection, DocId: id})
+	if err != nil {
+		return fmt.Errorf("peat DeleteDocument(%s/%s): %w", collection, id, err)
+	}
+	return nil
+}
+
+func (s *PeatStore) ListRows(ctx context.Context, collection string) ([]Row, error) {
 	resp, err := s.client.ListDocuments(ctx, &sidecarv1.ListDocumentsRequest{Collection: collection})
 	if err != nil {
 		return nil, fmt.Errorf("peat ListDocuments: %w", err)
@@ -103,7 +118,7 @@ func (s *PeatStore) ListRows(ctx context.Context, collection string) ([]map[stri
 		}
 	}
 	sort.Strings(ids)
-	out := make([]map[string]string, 0, len(ids))
+	out := make([]Row, 0, len(ids))
 	for _, id := range ids {
 		got, err := s.client.GetDocument(ctx, &sidecarv1.GetDocumentRequest{Collection: collection, DocId: id})
 		if err != nil {
@@ -112,11 +127,11 @@ func (s *PeatStore) ListRows(ctx context.Context, collection string) ([]map[stri
 		if got.JsonData == nil {
 			continue
 		}
-		var row map[string]string
-		if err := json.Unmarshal([]byte(*got.JsonData), &row); err != nil {
+		var fields map[string]string
+		if err := json.Unmarshal([]byte(*got.JsonData), &fields); err != nil {
 			return nil, err
 		}
-		out = append(out, row)
+		out = append(out, Row{ID: id, Fields: fields})
 	}
 	return out, nil
 }

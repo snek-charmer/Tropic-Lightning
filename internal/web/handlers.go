@@ -114,6 +114,11 @@ func (s *Server) Routes() http.Handler {
 	// Dataset access (authenticated; per-dataset assignment enforced in-handler).
 	authed := func(h http.HandlerFunc) http.Handler { return s.auth.Authenticate(h) }
 	mux.Handle("GET /datasets/{collection}", authed(s.handleDatasetView))
+	// Operators (assigned) and admins can edit generic datasets.
+	mux.Handle("POST /datasets/{collection}/columns/add", authed(s.handleDatasetAddColumn))
+	mux.Handle("POST /datasets/{collection}/columns/delete", authed(s.handleDatasetDeleteColumn))
+	mux.Handle("POST /datasets/{collection}/rows/add", authed(s.handleDatasetAddRow))
+	mux.Handle("POST /datasets/{collection}/rows/delete", authed(s.handleDatasetDeleteRow))
 	mux.Handle("GET /missions", authed(s.handleMissions))
 	mux.Handle("POST /pilots/{id}/status", authed(s.handlePilotStatus))
 	mux.Handle("GET /api/missions/summary", authed(s.handleMissionsSummary))
@@ -523,7 +528,7 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 	if col != "" && val != "" || q != "" {
 		filtered = filtered[:0:0]
 		for _, row := range rows {
-			if rowMatches(row, col, val, q) {
+			if rowMatches(row.Fields, col, val, q) {
 				filtered = append(filtered, row)
 			}
 		}
@@ -547,6 +552,58 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		"FilterActive": (col != "" && val != "") || q != "",
 		"Imported":     r.URL.Query().Get("imported"),
 		"Capped":       r.URL.Query().Get("capped"),
+	})
+}
+
+// dataset edits (assigned operators + admins). Each checks access, mutates, and
+// redirects back to the viewer.
+
+func (s *Server) datasetEdit(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, collection string) error) {
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) {
+		s.forbidden(w, r)
+		return
+	}
+	dest := "/datasets/" + collection
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, dest+"?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	if err := fn(r.Context(), collection); err != nil {
+		http.Redirect(w, r, dest+"?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+func (s *Server) handleDatasetAddColumn(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		return s.datasets.AddColumn(ctx, c, r.PostFormValue("name"))
+	})
+}
+
+func (s *Server) handleDatasetDeleteColumn(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		return s.datasets.DeleteColumn(ctx, c, r.PostFormValue("name"))
+	})
+}
+
+func (s *Server) handleDatasetAddRow(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		// Column inputs are named "f_<column>".
+		values := map[string]string{}
+		for k, v := range r.PostForm {
+			if name, ok := strings.CutPrefix(k, "f_"); ok && len(v) > 0 {
+				values[name] = v[0]
+			}
+		}
+		return s.datasets.AddRow(ctx, c, values)
+	})
+}
+
+func (s *Server) handleDatasetDeleteRow(w http.ResponseWriter, r *http.Request) {
+	s.datasetEdit(w, r, func(ctx context.Context, c string) error {
+		return s.datasets.DeleteRow(ctx, c, r.PostFormValue("id"))
 	})
 }
 

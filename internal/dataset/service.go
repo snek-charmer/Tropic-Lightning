@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
@@ -121,7 +123,7 @@ func (s *Service) Import(ctx context.Context, token, name string, keep []string)
 }
 
 // View returns a dataset's display name, column order, and rows.
-func (s *Service) View(ctx context.Context, collection string) (string, []string, []map[string]string, error) {
+func (s *Service) View(ctx context.Context, collection string) (string, []string, []Row, error) {
 	name, cols, err := s.store.Meta(ctx, collection)
 	if err != nil {
 		return "", nil, nil, err
@@ -131,6 +133,79 @@ func (s *Service) View(ctx context.Context, collection string) (string, []string
 		return "", nil, nil, err
 	}
 	return name, cols, rows, nil
+}
+
+// AddColumn appends a new column to the dataset schema.
+func (s *Service) AddColumn(ctx context.Context, collection, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("column name is required")
+	}
+	dsName, cols, err := s.store.Meta(ctx, collection)
+	if err != nil {
+		return err
+	}
+	for _, c := range cols {
+		if c == name {
+			return fmt.Errorf("column %q already exists", name)
+		}
+	}
+	return s.store.PutMeta(ctx, collection, dsName, append(cols, name))
+}
+
+// DeleteColumn removes a column from the schema and strips it from every row.
+func (s *Service) DeleteColumn(ctx context.Context, collection, name string) error {
+	dsName, cols, err := s.store.Meta(ctx, collection)
+	if err != nil {
+		return err
+	}
+	kept := make([]string, 0, len(cols))
+	found := false
+	for _, c := range cols {
+		if c == name {
+			found = true
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if !found {
+		return fmt.Errorf("column %q not found", name)
+	}
+	if err := s.store.PutMeta(ctx, collection, dsName, kept); err != nil {
+		return err
+	}
+	rows, err := s.store.ListRows(ctx, collection)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if _, ok := row.Fields[name]; !ok {
+			continue
+		}
+		delete(row.Fields, name)
+		if err := s.store.PutRow(ctx, collection, row.ID, row.Fields); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AddRow appends a row, keeping only values for known columns.
+func (s *Service) AddRow(ctx context.Context, collection string, values map[string]string) error {
+	_, cols, err := s.store.Meta(ctx, collection)
+	if err != nil {
+		return err
+	}
+	fields := make(map[string]string, len(cols))
+	for _, c := range cols {
+		fields[c] = strings.TrimSpace(values[c])
+	}
+	return s.store.PutRow(ctx, collection, "r"+uuid.NewString(), fields)
+}
+
+// DeleteRow removes a row by ID.
+func (s *Service) DeleteRow(ctx context.Context, collection, id string) error {
+	return s.store.DeleteRow(ctx, collection, id)
 }
 
 // slug normalises a name into a safe collection suffix.

@@ -6,12 +6,12 @@ metadata:
     Keycloak OIDC portal with peat-backed, edge/disconnected data sources.
     App-only bundle: it layers onto an existing UDS platform (Zarf init and
     UDS Core / Istio / Keycloak / UDS Operator must already be deployed).
-  version: "0.1.9"
+  version: "0.1.10"
 
 packages:
   - name: keycloak-portal
     path: ../zarf
-    ref: 0.1.9
+    ref: 0.1.10
     overrides:
       # <zarf-component>: <helm-chart>:
       keycloak-portal:
@@ -22,7 +22,7 @@ packages:
             - path: image.repository
               value: keycloak-portal
             - path: image.tag
-              value: "0.1.9"
+              value: "0.1.10"
           variables:
             - name: PORTAL_HOST
               path: uds.expose.host

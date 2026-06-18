@@ -48,6 +48,15 @@ func (s *MemoryStore) PutRow(_ context.Context, collection, id string, fields ma
 	return nil
 }
 
+func (s *MemoryStore) DeleteRow(_ context.Context, collection, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.data[collection]; ok {
+		delete(c.rows, id)
+	}
+	return nil
+}
+
 func (s *MemoryStore) Meta(_ context.Context, collection string) (string, []string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -58,7 +67,7 @@ func (s *MemoryStore) Meta(_ context.Context, collection string) (string, []stri
 	return c.name, c.cols, nil
 }
 
-func (s *MemoryStore) ListRows(_ context.Context, collection string) ([]map[string]string, error) {
+func (s *MemoryStore) ListRows(_ context.Context, collection string) ([]Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.data[collection]
@@ -70,9 +79,9 @@ func (s *MemoryStore) ListRows(_ context.Context, collection string) ([]map[stri
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	out := make([]map[string]string, 0, len(ids))
+	out := make([]Row, 0, len(ids))
 	for _, id := range ids {
-		out = append(out, c.rows[id])
+		out = append(out, Row{ID: id, Fields: c.rows[id]})
 	}
 	return out, nil
 }
