@@ -61,6 +61,32 @@ service:
   port: 80
   targetPort: 3000
 
+# -- UDS integration. When enabled, a uds.dev/v1alpha1 Package CR is rendered so
+# the UDS Operator manages SSO (creates the Keycloak client + secret), Istio
+# exposure (VirtualService), and NetworkPolicies. Requires UDS Core in-cluster.
+# When enabled, the chart's own VirtualService and OIDC client Secret are NOT
+# rendered (UDS provides them).
+uds:
+  enabled: false
+  expose:
+    # Full external hostname for the portal (also used to derive redirect URLs).
+    host: "portal.uds.dev"
+    # UDS gateway: tenant | admin | passthrough.
+    gateway: tenant
+  sso:
+    clientName: "Keycloak Portal"
+    # Secret the UDS Operator writes the generated client secret into. The chart
+    # reads OIDC_CLIENT_SECRET from this secret when uds.enabled.
+    secretName: keycloak-portal-sso
+    # Optional Keycloak group restriction (anyOf). Empty = no restriction.
+    groups: []
+  peat:
+    # Egress NetworkPolicy target for the peat node (data-source backend).
+    namespace: peat-system
+    port: 50051
+  # Additional spec.network.allow rules appended verbatim.
+  extraAllow: []
+
 istio:
   # Request the Istio sidecar on the pod (relies on mesh-wide mTLS; no extra
   # PeerAuthentication is rendered).

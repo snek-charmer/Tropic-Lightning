@@ -1,0 +1,36 @@
+# Example overrides for deploying via UDS (UDS Operator manages SSO + exposure).
+# Usage (in a UDS Core cluster):
+#   helm upgrade --install portal deploy/helm/keycloak-portal \
+#     -n portal --create-namespace -f deploy/helm/keycloak-portal/values-uds.yaml
+#
+# With UDS you do NOT supply the OIDC client secret — the UDS Operator creates
+# the Keycloak client and writes the secret into uds.sso.secretName, which the
+# chart reads automatically.
+
+image:
+  repository: keycloak-portal
+  tag: "0.1.0"
+
+uds:
+  enabled: true
+  expose:
+    host: "portal.uds.dev"      # your portal's external host
+    gateway: tenant
+  sso:
+    clientName: "Keycloak Portal"
+    secretName: keycloak-portal-sso
+    # Restrict to a Keycloak group (optional):
+    # groups: ["/UDS Core/Admin"]
+  peat:
+    namespace: peat-system
+    port: 50051
+
+config:
+  # Keycloak realm issuer (reachable identically by browser and pod).
+  issuer: "https://sso.uds.dev/realms/uds"
+  clientId: keycloak-portal
+  # redirectUrl / postLogoutRedirectUrl are derived from uds.expose.host.
+  cookieSecure: true
+  peatNodeAddr: "peat-node-peat-node.peat-system.svc:50051"
+  peatCollection: data_sources
+  peatTls: false

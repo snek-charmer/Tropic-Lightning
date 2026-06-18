@@ -1,0 +1,58 @@
+{{- if .Values.uds.enabled }}
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: {{ include "keycloak-portal.fullname" . }}
+  labels:
+    {{- include "keycloak-portal.labels" . | nindent 4 }}
+spec:
+  network:
+    # Istio exposure — UDS renders the VirtualService on the chosen gateway.
+    expose:
+      - service: {{ include "keycloak-portal.fullname" . }}
+        selector:
+          {{- include "keycloak-portal.selectorLabels" . | nindent 10 }}
+        host: {{ .Values.uds.expose.host | quote }}
+        gateway: {{ .Values.uds.expose.gateway }}
+        port: {{ .Values.service.port }}
+        targetPort: {{ .Values.service.targetPort }}
+    # Egress NetworkPolicies (namespace is default-deny under UDS). DNS, Istiod,
+    # and metrics policies are provided automatically by the UDS Operator.
+    allow:
+      - direction: Egress
+        selector:
+          {{- include "keycloak-portal.selectorLabels" . | nindent 10 }}
+        remoteNamespace: {{ .Values.uds.peat.namespace | quote }}
+        port: {{ .Values.uds.peat.port }}
+        description: "Portal to peat node (data-source gRPC)"
+      - direction: Egress
+        selector:
+          {{- include "keycloak-portal.selectorLabels" . | nindent 10 }}
+        remoteNamespace: keycloak
+        description: "Portal to Keycloak (OIDC discovery/token)"
+      {{- with .Values.uds.extraAllow }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  sso:
+    - name: {{ .Values.uds.sso.clientName | quote }}
+      clientId: {{ .Values.config.clientId | quote }}
+      standardFlowEnabled: true
+      redirectUris:
+        - {{ printf "https://%s/auth/callback" .Values.uds.expose.host | quote }}
+      {{- with .Values.uds.sso.groups }}
+      groups:
+        anyOf:
+          {{- range . }}
+          - {{ . | quote }}
+          {{- end }}
+      {{- end }}
+      # UDS Operator creates the Keycloak client and writes the generated secret
+      # into this Kubernetes Secret. The Deployment reads OIDC_CLIENT_SECRET from
+      # it (see _helpers.tpl). pod-reload restarts pods when the secret rotates.
+      secretConfig:
+        name: {{ .Values.uds.sso.secretName }}
+        labels:
+          uds.dev/pod-reload: "true"
+        template:
+          OIDC_CLIENT_SECRET: "clientField(secret)"
+{{- end }}

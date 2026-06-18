@@ -19,9 +19,9 @@ variables:
     description: "Keycloak OIDC client ID"
     default: keycloak-portal
   - name: CLIENT_SECRET
-    description: "OIDC client secret for the confidential client"
+    description: "OIDC client secret (standalone Zarf only; set with --set CLIENT_SECRET=... or --confirm prompts). Ignored under UDS, which auto-generates the client secret."
     sensitive: true
-    prompt: true
+    default: ""
   - name: HOST
     description: "Public hostname for the portal (used for the Istio VirtualService and the OIDC redirect URLs)"
     prompt: true

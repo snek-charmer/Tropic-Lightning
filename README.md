@@ -189,6 +189,32 @@ Package variables (prompted if omitted): `ISSUER`, `CLIENT_ID`, `CLIENT_SECRET`
 agent rewrites the bundled image to the in-cluster registry automatically, and
 an SBOM is generated at build time.
 
+## Deploy as a UDS bundle
+
+For a full UDS platform deployment, [`deploy/uds`](deploy/uds) defines a
+`UDSBundle` composing **Zarf init + UDS Core (Istio/Keycloak/Operator) + the
+portal**. When `uds.enabled` is set (the bundle does this), the chart renders a
+`uds.dev/v1alpha1` **Package** CR and the UDS Operator takes over the wiring:
+
+- **SSO** — creates the Keycloak client and writes the secret into
+  `keycloak-portal-sso`; the app reads it. You don't supply a client secret.
+- **Exposure** — generates the Istio `VirtualService` (chart's own VS is
+  disabled under UDS).
+- **NetworkPolicies** — default-deny namespace with declared egress to the peat
+  node and Keycloak.
+
+```bash
+docker build -t keycloak-portal:0.1.0 .
+zarf package create deploy/zarf --confirm --output deploy/zarf
+uds create deploy/uds --confirm
+uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \
+  --set PORTAL_HOST="portal.example.com" \
+  --set ISSUER="https://sso.example.com/realms/uds"
+```
+
+See the [UDS bundle README](deploy/uds/README.md) for variables and pinning the
+uds-core version/flavor. The peat node remains a platform prerequisite.
+
 ## Keycloak setup (manual / existing Keycloak)
 
 1. Create (or pick) a **realm**.

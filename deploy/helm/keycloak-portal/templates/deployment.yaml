@@ -16,7 +16,7 @@ spec:
       annotations:
         # Roll the pods when config or secret content changes.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        {{- if not .Values.clientSecret.existingSecret.name }}
+        {{- if and (not .Values.uds.enabled) (not .Values.clientSecret.existingSecret.name) }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         sidecar.istio.io/inject: {{ .Values.istio.sidecarInject | quote }}

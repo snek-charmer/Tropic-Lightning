@@ -57,10 +57,13 @@ Service account name
 {{- end }}
 
 {{/*
-Name of the Secret holding the OIDC client secret (existing or chart-created).
+Name of the Secret holding the OIDC client secret. With UDS, the UDS Operator
+generates it (uds.sso.secretName). Otherwise an existing or chart-created Secret.
 */}}
 {{- define "keycloak-portal.secretName" -}}
-{{- if .Values.clientSecret.existingSecret.name }}
+{{- if .Values.uds.enabled }}
+{{- .Values.uds.sso.secretName }}
+{{- else if .Values.clientSecret.existingSecret.name }}
 {{- .Values.clientSecret.existingSecret.name }}
 {{- else }}
 {{- include "keycloak-portal.fullname" . }}
@@ -71,7 +74,9 @@ Name of the Secret holding the OIDC client secret (existing or chart-created).
 Key within the Secret that holds the OIDC client secret.
 */}}
 {{- define "keycloak-portal.secretKey" -}}
-{{- if .Values.clientSecret.existingSecret.name }}
+{{- if .Values.uds.enabled }}
+{{- "OIDC_CLIENT_SECRET" }}
+{{- else if .Values.clientSecret.existingSecret.name }}
 {{- default "OIDC_CLIENT_SECRET" .Values.clientSecret.existingSecret.key }}
 {{- else }}
 {{- "OIDC_CLIENT_SECRET" }}
