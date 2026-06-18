@@ -57,6 +57,19 @@ Service account name
 {{- end }}
 
 {{/*
+Full external host under UDS: explicit fullHost if set, else <host>.<domain>.
+expose.host is only the subdomain (UDS appends the domain), so redirect URLs must
+use this full host, not expose.host alone.
+*/}}
+{{- define "keycloak-portal.udsFullHost" -}}
+{{- if .Values.uds.expose.fullHost -}}
+{{- .Values.uds.expose.fullHost -}}
+{{- else -}}
+{{- printf "%s.%s" .Values.uds.expose.host .Values.uds.expose.domain -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Name of the Secret holding the OIDC client secret. With UDS, the UDS Operator
 generates it (uds.sso.secretName). Otherwise an existing or chart-created Secret.
 */}}

@@ -9,8 +9,8 @@ data:
   KEYCLOAK_ISSUER: {{ .Values.config.issuer | quote }}
   OIDC_CLIENT_ID: {{ .Values.config.clientId | quote }}
   {{- if .Values.uds.enabled }}
-  OIDC_REDIRECT_URL: {{ printf "https://%s/auth/callback" .Values.uds.expose.host | quote }}
-  OIDC_POST_LOGOUT_REDIRECT_URL: {{ printf "https://%s/" .Values.uds.expose.host | quote }}
+  OIDC_REDIRECT_URL: {{ printf "https://%s/auth/callback" (include "keycloak-portal.udsFullHost" .) | quote }}
+  OIDC_POST_LOGOUT_REDIRECT_URL: {{ printf "https://%s/" (include "keycloak-portal.udsFullHost" .) | quote }}
   {{- else }}
   OIDC_REDIRECT_URL: {{ .Values.config.redirectUrl | quote }}
   OIDC_POST_LOGOUT_REDIRECT_URL: {{ .Values.config.postLogoutRedirectUrl | quote }}

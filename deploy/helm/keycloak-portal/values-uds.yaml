@@ -14,8 +14,11 @@ image:
 uds:
   enabled: true
   expose:
-    host: "portal.uds.dev"      # your portal's external host
+    host: "portal"              # subdomain ONLY — UDS appends the domain below
+    domain: "uds.dev"           # cluster domain (=> portal.uds.dev)
     gateway: tenant
+    # For the admin gateway, set the full host instead:
+    # fullHost: "portal.admin.uds.dev"
   sso:
     clientName: "Keycloak Portal"
     secretName: keycloak-portal-sso

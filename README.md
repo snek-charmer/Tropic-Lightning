@@ -209,9 +209,14 @@ docker build -t keycloak-portal:0.1.0 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \
-  --set PORTAL_HOST="portal.example.com" \
+  --set PORTAL_HOST="portal" \
+  --set DOMAIN="example.com" \
   --set ISSUER="https://sso.example.com/realms/uds"
 ```
+
+> `PORTAL_HOST` is the **subdomain only** — UDS appends `DOMAIN`
+> (`portal` + `example.com` => `portal.example.com`). The redirect URI is built
+> from `<PORTAL_HOST>.<DOMAIN>`.
 
 See the [UDS bundle README](deploy/uds/README.md) for variables. Zarf init, UDS
 Core, and the peat node are platform prerequisites.
