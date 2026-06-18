@@ -23,9 +23,10 @@ import (
 var templateFS embed.FS
 
 const (
-	stateCookie   = "oidc_state"
-	nonceCookie   = "oidc_nonce"
-	idTokenCookie = "id_token" // kept only as a logout hint
+	stateCookie    = "oidc_state"
+	nonceCookie    = "oidc_nonce"
+	idTokenCookie  = "id_token"  // kept only as a logout hint
+	returnToCookie = "return_to" // page to return to after login
 )
 
 // Server holds the dependencies shared by the HTTP handlers.
@@ -127,6 +128,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	s.setCookie(w, stateCookie, state, 10*time.Minute)
 	s.setCookie(w, nonceCookie, nonce, 10*time.Minute)
 
+	// Remember where to return after login (set by the auth middleware's redirect).
+	if rt := auth.SafeLocalPath(r.URL.Query().Get("return_to")); rt != "" {
+		s.setCookie(w, returnToCookie, rt, 10*time.Minute)
+	} else {
+		s.clearCookie(w, returnToCookie)
+	}
+
 	http.Redirect(w, r, s.auth.AuthCodeURL(state, nonce), http.StatusFound)
 }
 
@@ -177,10 +185,23 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setCookie(w, auth.AccessTokenCookie, token.AccessToken, tokenTTL)
 	s.setCookie(w, idTokenCookie, rawIDToken, tokenTTL)
+	// Store the refresh token so the session renews silently when the access
+	// token expires (instead of bouncing the user to the dashboard).
+	if token.RefreshToken != "" {
+		s.setCookie(w, auth.RefreshTokenCookie, token.RefreshToken, 12*time.Hour)
+	}
 	s.clearCookie(w, stateCookie)
 	s.clearCookie(w, nonceCookie)
 
-	http.Redirect(w, r, "/dashboard", http.StatusFound)
+	// Return to the page that triggered login, if any.
+	dest := "/dashboard"
+	if c, err := r.Cookie(returnToCookie); err == nil {
+		if rt := auth.SafeLocalPath(c.Value); rt != "" {
+			dest = rt
+		}
+		s.clearCookie(w, returnToCookie)
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // handleLogout clears local cookies and redirects to Keycloak's RP-initiated
@@ -191,6 +212,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		idHint = c.Value
 	}
 	s.clearCookie(w, auth.AccessTokenCookie)
+	s.clearCookie(w, auth.RefreshTokenCookie)
 	s.clearCookie(w, idTokenCookie)
 	http.Redirect(w, r, s.auth.LogoutURL(idHint), http.StatusFound)
 }

@@ -6,12 +6,22 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // AccessTokenCookie is the cookie used to carry the access token for browser
 // navigation of the server-rendered portal. Programmatic/API callers may
 // instead send the token in the Authorization header.
 const AccessTokenCookie = "access_token"
+
+// RefreshTokenCookie carries the OIDC refresh token so the session can be
+// silently renewed when the (short-lived) access token expires, instead of
+// bouncing the user through login.
+const RefreshTokenCookie = "refresh_token"
+
+// refreshCookieTTL is how long the refresh-token cookie persists. The server may
+// reject the refresh sooner (its own lifetime); we then fall back to login.
+const refreshCookieTTL = 12 * time.Hour
 
 type contextKey string
 
@@ -76,20 +86,64 @@ func (c *Claims) AllRealmRoles() []string {
 // login; API requests receive 401.
 func (a *Authenticator) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := extractToken(r)
-		if raw == "" {
-			a.deny(w, r, http.StatusUnauthorized, "missing access token")
+		claims := a.verifyOrRefresh(w, r)
+		if claims == nil {
+			a.deny(w, r, http.StatusUnauthorized, "authentication required")
 			return
 		}
-
-		claims, err := a.VerifyAccessToken(r.Context(), raw)
-		if err != nil {
-			a.deny(w, r, http.StatusUnauthorized, "invalid or expired access token")
-			return
-		}
-
 		ctx := context.WithValue(r.Context(), claimsContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// verifyOrRefresh validates the access token; if it is missing/expired, it tries
+// a silent refresh using the refresh-token cookie (browser sessions). On a
+// successful refresh it rewrites the session cookies so subsequent requests use
+// the new token. Returns nil when neither path authenticates the request.
+func (a *Authenticator) verifyOrRefresh(w http.ResponseWriter, r *http.Request) *Claims {
+	if raw := extractToken(r); raw != "" {
+		if claims, err := a.VerifyAccessToken(r.Context(), raw); err == nil {
+			return claims
+		}
+	}
+
+	rt, err := r.Cookie(RefreshTokenCookie)
+	if err != nil || rt.Value == "" {
+		return nil
+	}
+	tok, err := a.Refresh(r.Context(), rt.Value)
+	if err != nil {
+		return nil
+	}
+	claims, err := a.VerifyAccessToken(r.Context(), tok.AccessToken)
+	if err != nil {
+		return nil
+	}
+
+	// Persist the renewed session for subsequent browser navigation.
+	ttl := time.Until(tok.Expiry)
+	if ttl <= 0 {
+		ttl = time.Hour
+	}
+	a.writeSessionCookie(w, AccessTokenCookie, tok.AccessToken, ttl)
+	if tok.RefreshToken != "" {
+		a.writeSessionCookie(w, RefreshTokenCookie, tok.RefreshToken, refreshCookieTTL)
+	}
+	return claims
+}
+
+// writeSessionCookie sets a session cookie with the same attributes the login
+// flow uses.
+func (a *Authenticator) writeSessionCookie(w http.ResponseWriter, name, value string, ttl time.Duration) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   a.cookieSecure,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Now().Add(ttl),
+		MaxAge:   int(ttl.Seconds()),
 	})
 }
 
@@ -174,7 +228,11 @@ func extractToken(r *http.Request) string {
 // login flow; everything else gets a JSON error with the right status code.
 func (a *Authenticator) deny(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	if status == http.StatusUnauthorized && acceptsHTML(r) {
-		http.Redirect(w, r, "/auth/login", http.StatusFound)
+		dest := "/auth/login"
+		if rt := returnTarget(r); rt != "" {
+			dest += "?return_to=" + url.QueryEscape(rt)
+		}
+		http.Redirect(w, r, dest, http.StatusFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -184,6 +242,32 @@ func (a *Authenticator) deny(w http.ResponseWriter, r *http.Request, status int,
 
 func acceptsHTML(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+// returnTarget computes a safe local path to send the user back to after login:
+// the current URL for GET navigation, or the Referer for other methods.
+func returnTarget(r *http.Request) string {
+	cand := ""
+	if r.Method == http.MethodGet {
+		cand = r.URL.RequestURI()
+	} else if ref := r.Header.Get("Referer"); ref != "" {
+		if u, err := url.Parse(ref); err == nil {
+			cand = u.RequestURI()
+		}
+	}
+	return SafeLocalPath(cand)
+}
+
+// SafeLocalPath returns p if it is a safe same-site path (guards against open
+// redirects and auth-flow loops), else "".
+func SafeLocalPath(p string) string {
+	if p == "" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return ""
+	}
+	if p == "/auth" || strings.HasPrefix(p, "/auth/") {
+		return ""
+	}
+	return p
 }
 
 func contains(haystack []string, needle string) bool {

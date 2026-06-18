@@ -68,7 +68,10 @@
       "Bash(unzip -l internal/pilots/data/usaf_pilots_synthetic.xlsx)",
       "Bash(unzip -p internal/pilots/data/usaf_pilots_synthetic.xlsx xl/workbook.xml)",
       "Bash(gofmt -w internal/pilots/)",
-      "Bash(gofmt -w internal/web/ internal/pilots/)"
+      "Bash(gofmt -w internal/web/ internal/pilots/)",
+      "Bash(sed -n '/^func \\(a \\\\*Authenticator\\) deny/,/^}/p' internal/auth/middleware.go)",
+      "Bash(sed -n '/Persist the access token/,/dashboard\", http.StatusFound\\)/p' internal/web/handlers.go)",
+      "Bash(gofmt -w internal/auth/ internal/web/)"
     ]
   }
 }
