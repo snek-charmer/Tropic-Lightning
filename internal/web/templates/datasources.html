@@ -74,6 +74,12 @@
   </div>
 
   <div class="card">
+    <h2>Upload a file</h2>
+    <p>Drag in a CSV/XLSX, preview it, drop unwanted columns, and ingest it as a dataset.</p>
+    <a class="btn" href="/datasources/upload">Add file (upload) →</a>
+  </div>
+
+  <div class="card">
     <h2>Configured sources</h2>
     {{if .Sources}}
     <table>
@@ -86,7 +92,8 @@
           <td>{{.Endpoint}}</td>
           <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
           <td>
-            <form method="POST" action="/datasources/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Name}}?');">
+            {{if hasPrefix .Endpoint "dataset://"}}<a class="btn" href="/datasets/{{trimPrefix .Endpoint "dataset://"}}">View rows</a>{{end}}
+            <form method="POST" action="/datasources/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Name}}?');" style="display:inline;">
               <button class="btn danger" type="submit">Delete</button>
             </form>
           </td>

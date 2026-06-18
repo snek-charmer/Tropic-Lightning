@@ -1,8 +1,10 @@
 package web_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
+	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
@@ -21,7 +24,8 @@ func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	t.Helper()
 	ds := datasource.NewService(datasource.NewMemoryStore())
 	pl := pilots.NewService(pilots.NewMemoryStore(), ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl)
+	dsets := dataset.NewService(dataset.NewMemoryStore(), ds, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dsets)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -569,7 +573,7 @@ func TestOperatorCanEditPilotStatus(t *testing.T) {
 	pstore := pilots.NewMemoryStore()
 	_ = pstore.Put(context.Background(), pilots.Pilot{PilotID: "P0001", MissionStatus: pilots.StatusAvailable})
 	pl := pilots.NewService(pstore, ds, nil)
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl, dataset.NewService(dataset.NewMemoryStore(), ds, nil))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -646,7 +650,7 @@ func TestMissionsFilterByBase(t *testing.T) {
 	ctx := context.Background()
 	_ = pstore.Put(ctx, pilots.Pilot{PilotID: "P1", Base: "Hill AFB", Aircraft: "F-16", MissionStatus: pilots.StatusAvailable})
 	_ = pstore.Put(ctx, pilots.Pilot{PilotID: "P2", Base: "Nellis AFB", Aircraft: "F-16", MissionStatus: pilots.StatusAvailable})
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pstore, ds, nil))
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pilots.NewService(pstore, ds, nil), dataset.NewService(dataset.NewMemoryStore(), ds, nil))
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -666,5 +670,81 @@ func TestMissionsFilterByBase(t *testing.T) {
 	}
 	if strings.Contains(body, ">P2<") || strings.Contains(body, "/pilots/P2/status") {
 		t.Error("Nellis pilot P2 should be filtered out")
+	}
+}
+
+func TestUploadParseAndImportFlow(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	// 1) Upload a CSV (multipart) -> JSON preview with a hold token.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "roster.csv")
+	_, _ = fw.Write([]byte("name,age,ssn\nAlice,30,111\nBob,41,222\n"))
+	_ = mw.Close()
+
+	up := httptest.NewRequest(http.MethodPost, "/datasources/upload", &buf)
+	up.Header.Set("Authorization", "Bearer "+tok)
+	up.Header.Set("Content-Type", mw.FormDataContentType())
+	uprec := httptest.NewRecorder()
+	h.ServeHTTP(uprec, up)
+	if uprec.Code != http.StatusOK {
+		t.Fatalf("upload status = %d (body %s)", uprec.Code, uprec.Body.String())
+	}
+	var prev struct {
+		Token   string   `json:"token"`
+		Columns []string `json:"columns"`
+		Total   int      `json:"total"`
+	}
+	if err := json.Unmarshal(uprec.Body.Bytes(), &prev); err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if prev.Token == "" || len(prev.Columns) != 3 || prev.Total != 2 {
+		t.Fatalf("preview = %+v", prev)
+	}
+
+	// 2) Import keeping name+age (drop ssn).
+	form := url.Values{"token": {prev.Token}, "name": {"Roster"}, "col": {"name", "age"}}
+	imp := httptest.NewRequest(http.MethodPost, "/datasources/import", strings.NewReader(form.Encode()))
+	imp.Header.Set("Authorization", "Bearer "+tok)
+	imp.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	imprec := httptest.NewRecorder()
+	h.ServeHTTP(imprec, imp)
+	if imprec.Code != http.StatusSeeOther {
+		t.Fatalf("import status = %d", imprec.Code)
+	}
+	loc := imprec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/datasets/") {
+		t.Fatalf("redirect = %q", loc)
+	}
+
+	// 3) View the dataset -> shows kept columns, not ssn.
+	vrec := httptest.NewRecorder()
+	vreq := httptest.NewRequest(http.MethodGet, loc, nil)
+	vreq.Header.Set("Authorization", "Bearer "+tok)
+	h.ServeHTTP(vrec, vreq)
+	if vrec.Code != http.StatusOK {
+		t.Fatalf("view status = %d", vrec.Code)
+	}
+	body := vrec.Body.String()
+	if !strings.Contains(body, "Alice") || strings.Contains(body, "ssn") {
+		t.Errorf("view should show kept data without ssn column")
+	}
+}
+
+func TestUploadRequiresAdmin(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	userTok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
+	req := httptest.NewRequest(http.MethodGet, "/datasources/upload", nil)
+	req.Header.Set("Authorization", "Bearer "+userTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin upload page = %d, want 403", rec.Code)
 	}
 }

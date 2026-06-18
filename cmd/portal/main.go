@@ -15,6 +15,7 @@ import (
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
+	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
@@ -76,7 +77,15 @@ func run() error {
 	defer pilotStore.Close()
 	pilotService := pilots.NewService(pilotStore, dsService, slog.Default())
 
-	srv, err := web.NewServer(authn, cfg, dsService, pilotService)
+	// Uploaded files become generic datasets in their own peat collections.
+	datasetStore, err := dataset.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer datasetStore.Close()
+	datasetService := dataset.NewService(datasetStore, dsService, slog.Default())
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService)
 	if err != nil {
 		return err
 	}

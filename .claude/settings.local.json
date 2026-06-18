@@ -71,7 +71,11 @@
       "Bash(gofmt -w internal/web/ internal/pilots/)",
       "Bash(sed -n '/^func \\(a \\\\*Authenticator\\) deny/,/^}/p' internal/auth/middleware.go)",
       "Bash(sed -n '/Persist the access token/,/dashboard\", http.StatusFound\\)/p' internal/web/handlers.go)",
-      "Bash(gofmt -w internal/auth/ internal/web/)"
+      "Bash(gofmt -w internal/auth/ internal/web/)",
+      "Bash(gofmt -w internal/dataset/)",
+      "Bash(perl -0pi -e 's/\\\\tpl := pilots\\\\.NewService\\\\\\(pstore, ds, nil\\\\\\)\\\\n\\\\tsrv, err := web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pl, dsets\\\\\\)/\\\\tpl := pilots.NewService\\(pstore, ds, nil\\)\\\\n\\\\tsrv, err := web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pl, dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)\\)/' internal/web/handlers_test.go)",
+      "Bash(perl -0pi -e 's/web\\\\.NewServer\\\\\\(kc\\\\.Authenticator\\\\\\(t\\\\\\), kc\\\\.Config\\\\\\(\\\\\\), ds, pilots\\\\.NewService\\\\\\(pstore, ds, nil\\\\\\)\\\\\\)/web.NewServer\\(kc.Authenticator\\(t\\), kc.Config\\(\\), ds, pilots.NewService\\(pstore, ds, nil\\), dataset.NewService\\(dataset.NewMemoryStore\\(\\), ds, nil\\)\\)/' internal/web/handlers_test.go)",
+      "Bash(gofmt -w internal/web/handlers_test.go)"
     ]
   }
 }
