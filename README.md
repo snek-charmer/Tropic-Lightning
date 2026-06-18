@@ -191,10 +191,11 @@ an SBOM is generated at build time.
 
 ## Deploy as a UDS bundle
 
-For a full UDS platform deployment, [`deploy/uds`](deploy/uds) defines a
-`UDSBundle` composing **Zarf init + UDS Core (Istio/Keycloak/Operator) + the
-portal**. When `uds.enabled` is set (the bundle does this), the chart renders a
-`uds.dev/v1alpha1` **Package** CR and the UDS Operator takes over the wiring:
+[`deploy/uds`](deploy/uds) defines an **app-only** `UDSBundle` — it contains just
+the portal and layers onto an existing UDS platform (Zarf init + UDS Core /
+Istio / Keycloak / UDS Operator must already be deployed). When `uds.enabled` is
+set (the bundle does this), the chart renders a `uds.dev/v1alpha1` **Package** CR
+and the UDS Operator takes over the wiring:
 
 - **SSO** — creates the Keycloak client and writes the secret into
   `keycloak-portal-sso`; the app reads it. You don't supply a client secret.
@@ -212,8 +213,8 @@ uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \
   --set ISSUER="https://sso.example.com/realms/uds"
 ```
 
-See the [UDS bundle README](deploy/uds/README.md) for variables and pinning the
-uds-core version/flavor. The peat node remains a platform prerequisite.
+See the [UDS bundle README](deploy/uds/README.md) for variables. Zarf init, UDS
+Core, and the peat node are platform prerequisites.
 
 ## Keycloak setup (manual / existing Keycloak)
 

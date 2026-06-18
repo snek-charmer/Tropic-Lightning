@@ -3,26 +3,12 @@ kind: UDSBundle
 metadata:
   name: keycloak-portal
   description: >-
-    Keycloak OIDC portal with peat-backed, edge/disconnected data sources,
-    bundled with the UDS Core platform (Istio, Keycloak, UDS Operator).
+    Keycloak OIDC portal with peat-backed, edge/disconnected data sources.
+    App-only bundle: it layers onto an existing UDS platform (Zarf init and
+    UDS Core / Istio / Keycloak / UDS Operator must already be deployed).
   version: "0.1.0"
 
 packages:
-  # 1) Zarf init — bootstraps the in-cluster registry, Zarf agent, etc.
-  - name: init
-    repository: ghcr.io/zarf-dev/packages/init
-    ref: v0.77.0
-
-  # 2) UDS Core — Istio service mesh, Keycloak (SSO), and the UDS Operator that
-  #    reconciles the Package CR (SSO clients, VirtualServices, NetworkPolicies).
-  #    Pin to the uds-core version + flavor used in your environment
-  #    (flavors: -upstream | -registry1 | -unicorn).
-  - name: core
-    repository: ghcr.io/defenseunicorns/packages/uds/core
-    ref: 1.6.0-upstream
-
-  # 3) The portal. Built locally from deploy/zarf (see README); referenced here by
-  #    path. UDS-specific config is applied via Helm overrides.
   - name: keycloak-portal
     path: ../zarf
     ref: 0.1.0

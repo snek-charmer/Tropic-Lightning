@@ -1,11 +1,14 @@
 # UDS bundle: keycloak-portal
 
-Deploys the portal as part of a [UDS](https://uds.defenseunicorns.com) bundle.
-The bundle composes:
+Deploys the portal as a [UDS](https://uds.defenseunicorns.com) bundle. This is an
+**app-only bundle** — it contains just the portal (the Zarf package in `../zarf`)
+and layers onto an existing UDS platform.
 
-1. **Zarf init** — registry + Zarf agent bootstrap.
-2. **UDS Core** — Istio service mesh, Keycloak (SSO), and the UDS Operator.
-3. **keycloak-portal** — this app (the Zarf package in `../zarf`).
+**Prerequisites (already deployed on the target cluster):**
+
+- **Zarf init** — registry + Zarf agent bootstrap.
+- **UDS Core** — Istio service mesh, Keycloak (SSO), and the UDS Operator.
+- **peat node** — the data-source backend.
 
 ## What UDS does for the app
 
@@ -22,8 +25,6 @@ reconciles it:
   egress to the **peat node** (`peat-system:50051`) and **Keycloak**. DNS,
   Istiod, and metrics policies are added automatically by the Operator.
 
-The peat node is a **platform prerequisite** (it is not part of this bundle).
-
 ## Build
 
 ```bash
@@ -31,13 +32,10 @@ The peat node is a **platform prerequisite** (it is not part of this bundle).
 docker build -t keycloak-portal:0.1.0 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 
-# 2) Create the bundle (pulls init + uds-core OCI artifacts).
+# 2) Create the bundle (app-only — no platform OCI pulls).
 uds create deploy/uds --confirm
 # -> uds-bundle-keycloak-portal-<arch>-0.1.0.tar.zst
 ```
-
-Pin the `core` package `ref` in `uds-bundle.yaml` to the uds-core **version and
-flavor** for your environment (`-upstream` | `-registry1` | `-unicorn`).
 
 ## Deploy
 
