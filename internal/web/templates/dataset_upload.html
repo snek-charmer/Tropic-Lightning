@@ -1,0 +1,120 @@
+{{define "dataset_upload.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add file data source · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    .muted { color: #777; }
+    .err { background:#fff0f0; color:#d63031; padding:.6rem 1rem; border-radius:8px; }
+    #drop { border: 2px dashed #b9b9e6; border-radius: 12px; padding: 2.5rem; text-align: center; color: #555; cursor: pointer; transition: background .15s, border-color .15s; }
+    #drop.over { background: #eef0ff; border-color: #4636f5; }
+    .btn { display:inline-block; background:#4636f5; color:#fff; border:none; padding:.6rem 1.2rem; border-radius:8px; font:inherit; font-weight:600; cursor:pointer; }
+    .btn.ghost { background:#fff; color:#4636f5; border:1px solid #4636f5; text-decoration:none; }
+    table { width:100%; border-collapse:collapse; margin-top:.5rem; font-size:.82rem; }
+    th, td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid #eee; white-space:nowrap; }
+    th label { display:flex; align-items:center; gap:.35rem; font-weight:700; cursor:pointer; }
+    th.dropped, td.dropped { opacity:.35; text-decoration:line-through; }
+    .wrap { overflow-x:auto; }
+    input[type=text] { padding:.5rem; border:1px solid #ccc; border-radius:8px; font:inherit; }
+    code { background:#f4f4f8; padding:.05rem .3rem; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <p><a href="/datasources">← Data sources</a></p>
+  <h1>Add a file data source</h1>
+  <p class="muted">Drag in a <code>.csv</code> or <code>.xlsx</code>, preview it, untick any columns you don't want, then add it.</p>
+
+  <div id="errbox"></div>
+
+  <div class="card">
+    <div id="drop">
+      <strong>Drop a CSV or XLSX here</strong><br>
+      <span class="muted">or click to choose a file</span>
+      <input id="file" type="file" accept=".csv,.xlsx" style="display:none">
+    </div>
+  </div>
+
+  <div id="preview" class="card" style="display:none;">
+    <form id="importForm" method="POST" action="/datasources/import">
+      <input type="hidden" name="token" id="token">
+      <p>
+        <label><strong>Dataset name</strong><br>
+          <input type="text" name="name" id="name" placeholder="e.g. Hill AFB roster" style="width:20rem;">
+        </label>
+      </p>
+      <p class="muted" id="meta"></p>
+      <p class="muted">Untick a column header to drop it before importing.</p>
+      <div class="wrap"><table id="tbl"></table></div>
+      <p style="margin-top:1rem;">
+        <button class="btn" type="submit">Add to application</button>
+        <a class="btn ghost" href="/datasources/upload">Reset</a>
+      </p>
+    </form>
+  </div>
+
+  <script>
+    var drop = document.getElementById('drop');
+    var fileInput = document.getElementById('file');
+    var errbox = document.getElementById('errbox');
+
+    // Show a server-side error passed back via ?error=
+    var params = new URLSearchParams(location.search);
+    if (params.get('error')) showError(params.get('error'));
+
+    function showError(msg){ errbox.innerHTML = '<p class="err">'+escapeHtml(msg)+'</p>'; }
+    function clearError(){ errbox.innerHTML = ''; }
+    function escapeHtml(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+    drop.addEventListener('click', function(){ fileInput.click(); });
+    ['dragenter','dragover'].forEach(function(e){ drop.addEventListener(e, function(ev){ ev.preventDefault(); drop.classList.add('over'); }); });
+    ['dragleave','drop'].forEach(function(e){ drop.addEventListener(e, function(ev){ ev.preventDefault(); drop.classList.remove('over'); }); });
+    drop.addEventListener('drop', function(ev){ if (ev.dataTransfer.files.length) upload(ev.dataTransfer.files[0]); });
+    fileInput.addEventListener('change', function(){ if (fileInput.files.length) upload(fileInput.files[0]); });
+
+    async function upload(file){
+      clearError();
+      var fd = new FormData(); fd.append('file', file);
+      try {
+        var r = await fetch('/datasources/upload', { method:'POST', body: fd });
+        var d = await r.json();
+        if (!r.ok) { showError(d.error || ('upload failed ('+r.status+')')); return; }
+        renderPreview(d);
+      } catch(e) { showError('upload failed: '+e); }
+    }
+
+    function renderPreview(d){
+      document.getElementById('token').value = d.token;
+      var base = (d.filename||'dataset').replace(/\.[^.]+$/, '');
+      document.getElementById('name').value = base;
+      document.getElementById('meta').textContent = d.filename + ' — ' + d.columns.length + ' columns, ' + d.total + ' rows (showing ' + d.rows.length + ').';
+
+      var tbl = document.getElementById('tbl');
+      var thead = '<thead><tr>';
+      d.columns.forEach(function(c, i){
+        thead += '<th data-col="'+i+'"><label><input type="checkbox" name="col" value="'+escapeHtml(c)+'" checked onchange="toggleCol('+i+', this.checked)">'+escapeHtml(c)+'</label></th>';
+      });
+      thead += '</tr></thead>';
+      var tbody = '<tbody>';
+      d.rows.forEach(function(row){
+        tbody += '<tr>';
+        d.columns.forEach(function(_, i){ tbody += '<td data-col="'+i+'">'+escapeHtml(row[i]!=null?row[i]:'')+'</td>'; });
+        tbody += '</tr>';
+      });
+      tbody += '</tbody>';
+      tbl.innerHTML = thead + tbody;
+      document.getElementById('preview').style.display = 'block';
+    }
+
+    function toggleCol(i, keep){
+      document.querySelectorAll('[data-col="'+i+'"]').forEach(function(el){
+        if (el.tagName === 'TH') { el.classList.toggle('dropped', !keep); }
+        else { el.classList.toggle('dropped', !keep); }
+      });
+    }
+  </script>
+</body>
+</html>{{end}}

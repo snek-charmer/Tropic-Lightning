@@ -1,0 +1,46 @@
+{{define "dataset_view.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Name}} · Dataset · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    .muted { color: #777; }
+    .ok { background:#e6f7ed; color:#1c7a44; padding:.6rem 1rem; border-radius:8px; }
+    table { width:100%; border-collapse:collapse; margin-top:.5rem; font-size:.82rem; }
+    th, td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid #eee; white-space:nowrap; }
+    th { position:sticky; top:0; background:#fafafe; }
+    .wrap { overflow-x:auto; }
+    code { background:#f4f4f8; padding:.05rem .3rem; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <p><a href="/datasources">← Data sources</a></p>
+  <h1>{{.Name}}</h1>
+
+  {{if .Imported}}<p class="ok">Imported {{.Imported}} rows into the peat mesh.{{if .Capped}} (file had {{.Capped}}; capped to {{.Imported}}){{end}}</p>{{end}}
+
+  <div class="card">
+    <p class="muted">{{len .Columns}} columns · {{.Total}} rows{{if lt .Shown .Total}} (showing first {{.Shown}}){{end}} · stored as a peat dataset.</p>
+    {{if .Rows}}
+    <div class="wrap">
+    <table>
+      <thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
+      <tbody>
+        {{$cols := .Columns}}
+        {{range .Rows}}
+        {{$row := .}}
+        <tr>{{range $cols}}<td>{{index $row .}}</td>{{end}}</tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}
+      <p class="muted">No rows.</p>
+    {{end}}
+  </div>
+</body>
+</html>{{end}}

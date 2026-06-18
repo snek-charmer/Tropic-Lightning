@@ -8,13 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
+	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 )
@@ -36,15 +39,20 @@ type Server struct {
 	templates   *template.Template
 	dataSources *datasource.Service
 	pilots      *pilots.Service
+	datasets    *dataset.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service) (*Server, error) {
-	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service, dsets *dataset.Service) (*Server, error) {
+	funcs := template.FuncMap{
+		"hasPrefix":  strings.HasPrefix,
+		"trimPrefix": strings.TrimPrefix,
+	}
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl, datasets: dsets}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -83,6 +91,12 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/datasources", admin(s.handleDataSourcesList))
 	mux.Handle("POST /api/datasources", admin(s.handleDataSourceCreate))
 	mux.Handle("DELETE /api/datasources/{id}", admin(s.handleDataSourceDelete))
+
+	// File upload -> preview/format -> ingest as a dataset (admin only).
+	mux.Handle("GET /datasources/upload", admin(s.handleUploadPage))
+	mux.Handle("POST /datasources/upload", admin(s.handleUploadParse))
+	mux.Handle("POST /datasources/import", admin(s.handleDatasetImport))
+	mux.Handle("GET /datasets/{collection}", admin(s.handleDatasetView))
 
 	// Pilots dataset (admin-only): view + import into peat.
 	mux.Handle("GET /pilots", admin(s.handlePilotsPage))
@@ -393,6 +407,97 @@ func (s *Server) handleDataSourceDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- file upload -> dataset (admin only) ---
+
+const maxUploadBytes = 12 << 20 // 12 MiB
+
+// handleUploadPage renders the drag-and-drop upload + preview page.
+func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "dataset_upload.html", nil)
+}
+
+// handleUploadParse accepts a multipart file, parses it, holds it for preview,
+// and returns the columns + a sample of rows as JSON for the in-browser preview.
+func (s *Server) handleUploadParse(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "file too large or invalid (max 12 MiB)"})
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no file provided"})
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxUploadBytes))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	token, parsed, err := s.datasets.Stage(header.Filename, data)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	sample := parsed.Rows
+	if len(sample) > 20 {
+		sample = sample[:20]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token":    token,
+		"filename": parsed.Filename,
+		"columns":  parsed.Columns,
+		"rows":     sample,
+		"total":    len(parsed.Rows),
+	})
+}
+
+// handleDatasetImport ingests the held upload, keeping the submitted columns.
+func (s *Server) handleDatasetImport(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, "/datasources/upload?error="+url.QueryEscape("invalid form"), http.StatusSeeOther)
+		return
+	}
+	token := r.PostFormValue("token")
+	name := r.PostFormValue("name")
+	keep := r.PostForm["col"] // checked columns to keep
+
+	res, err := s.datasets.Import(r.Context(), token, name, keep)
+	if err != nil {
+		http.Redirect(w, r, "/datasources/upload?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	dest := "/datasets/" + res.Collection + "?imported=" + strconv.Itoa(res.Imported)
+	if res.Capped {
+		dest += "&capped=" + strconv.Itoa(res.Total)
+	}
+	http.Redirect(w, r, dest, http.StatusSeeOther)
+}
+
+// handleDatasetView renders an ingested dataset's rows (kept columns).
+func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	name, cols, rows, err := s.datasets.View(r.Context(), collection)
+	if err != nil {
+		http.Error(w, "failed to load dataset: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	shown := rows
+	if len(shown) > pilotsDisplayLimit {
+		shown = shown[:pilotsDisplayLimit]
+	}
+	s.render(w, "dataset_view.html", map[string]any{
+		"Name":     name,
+		"Columns":  cols,
+		"Rows":     shown,
+		"Shown":    len(shown),
+		"Total":    len(rows),
+		"Imported": r.URL.Query().Get("imported"),
+		"Capped":   r.URL.Query().Get("capped"),
+	})
 }
 
 // --- pilots dataset (admin only) ---
