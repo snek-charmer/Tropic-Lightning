@@ -1,0 +1,41 @@
+{{define "decks.html"}}
+<div class="page-head">
+  <h1>Decks</h1>
+  <p class="muted">Shared meeting spaces. Publish a filtered visual from any dataset to a deck, then run the meeting from the deck — everyone's work in one place, live against current data.</p>
+</div>
+
+{{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
+
+<div class="card">
+  <h2>New deck</h2>
+  <form method="POST" action="/decks" class="inline-fields">
+    <div class="field"><label>Name</label><input type="text" name="name" placeholder="e.g. Weekly readiness sync" required></div>
+    <div class="field"><button class="btn" type="submit">Create deck</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>All decks</h2>
+  {{if .Decks}}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Created by</th><th></th></tr></thead>
+      <tbody>
+        {{range .Decks}}
+        <tr>
+          <td><strong>{{.Name}}</strong></td>
+          <td class="muted">{{.CreatedBy}}</td>
+          <td style="text-align:right;">
+            <div style="display:inline-flex; gap:.4rem;">
+              <a class="btn sm ghost" href="/decks/{{.ID}}">Open</a>
+              <form method="POST" action="/decks/{{.ID}}/delete" onsubmit="return confirm('Delete deck {{.Name}} and all its slides?');" style="display:inline;"><button class="btn sm danger" type="submit">Delete</button></form>
+            </div>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}<div class="empty">No decks yet. Create one above, then publish visuals to it from a dataset.</div>{{end}}
+</div>
+{{end}}

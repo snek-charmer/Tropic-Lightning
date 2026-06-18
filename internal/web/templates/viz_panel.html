@@ -1,0 +1,61 @@
+{{define "viz_panel.html"}}
+{{if .Err}}
+  <div class="empty">{{.Name}} — {{.Err}}.</div>
+{{else if eq .ViewType "wheel"}}
+  {{if .WheelSegments}}
+  <div style="display:flex; gap:1.5rem; align-items:center; flex-wrap:wrap;">
+    <div style="width:140px; height:140px; border-radius:50%; position:relative; flex:none; background:{{.WheelGradient}};">
+      <div style="position:absolute; inset:26%; background:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800;">{{.Total}}</div>
+    </div>
+    <table style="font-size:.82rem; width:auto;"><tbody>
+      {{range .WheelSegments}}<tr>
+        <td style="border:none; padding:.15rem .4rem;"><span style="display:inline-block;width:.8rem;height:.8rem;border-radius:3px;background:{{.Color}};"></span></td>
+        <td style="border:none; padding:.15rem .4rem;">{{.Label}}</td>
+        <td style="border:none; padding:.15rem .4rem; text-align:right; font-weight:700;">{{.Count}}</td>
+        <td style="border:none; padding:.15rem .4rem; text-align:right; color:var(--muted);">{{printf "%.0f%%" .Pct}}</td>
+      </tr>{{end}}
+    </tbody></table>
+  </div>
+  {{else}}<div class="empty">No data to chart.</div>{{end}}
+
+{{else if eq .ViewType "bar"}}
+  {{if .Bars}}{{range .Bars}}
+    <div style="display:flex; align-items:center; gap:.5rem; margin:.2rem 0;">
+      <div style="width:9rem; text-align:right; font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{{.Label}}">{{.Label}}</div>
+      <div style="flex:1; background:var(--bg); border-radius:5px;"><div style="width:{{.BarPct}}%; min-width:2px; background:{{.Color}}; height:1rem; border-radius:5px;"></div></div>
+      <div style="width:4.5rem; font-weight:700; font-size:.82rem;">{{.Display}}</div>
+    </div>
+  {{end}}{{else}}<div class="empty">No data to chart.</div>{{end}}
+
+{{else if eq .ViewType "line"}}
+  {{if .HasLine}}
+  <svg viewBox="0 0 {{.Line.W}} {{.Line.H}}" preserveAspectRatio="none" style="width:100%; height:200px; overflow:visible;">
+    <polyline points="{{.Line.Polyline}}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    {{range .Line.Points}}<circle cx="{{.CX}}" cy="{{.CY}}" r="3" fill="var(--accent)"><title>{{.X}}: {{.YDisp}}</title></circle>{{end}}
+  </svg>
+  <p class="muted" style="font-size:.78rem; margin:.2rem 0 0;">min {{.Line.YMin}} · max {{.Line.YMax}} · {{len .Line.Points}} points</p>
+  {{else}}<div class="empty">No data to chart.</div>{{end}}
+
+{{else if eq .ViewType "stats"}}
+  <div class="grid2">
+    <div class="card tight" style="margin:0; text-align:center;"><div class="muted" style="font-size:.7rem;">ROWS</div><div style="font-size:1.5rem; font-weight:800;">{{.Stats.Count}}</div></div>
+    {{if .ViewValueCol}}
+    <div class="card tight" style="margin:0; text-align:center;"><div class="muted" style="font-size:.7rem;">SUM</div><div style="font-size:1.5rem; font-weight:800;">{{.Stats.Sum}}</div></div>
+    <div class="card tight" style="margin:0; text-align:center;"><div class="muted" style="font-size:.7rem;">AVG</div><div style="font-size:1.5rem; font-weight:800;">{{.Stats.Avg}}</div></div>
+    <div class="card tight" style="margin:0; text-align:center;"><div class="muted" style="font-size:.7rem;">MIN</div><div style="font-size:1.5rem; font-weight:800;">{{.Stats.Min}}</div></div>
+    <div class="card tight" style="margin:0; text-align:center;"><div class="muted" style="font-size:.7rem;">MAX</div><div style="font-size:1.5rem; font-weight:800;">{{.Stats.Max}}</div></div>
+    {{end}}
+  </div>
+
+{{else}}
+  {{if .Rows}}
+  <div class="table-wrap" style="max-height:340px; overflow:auto;">
+    <table>
+      <thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
+      <tbody>{{$cols := .Columns}}{{range .Rows}}{{$row := .}}<tr>{{range $cols}}<td>{{index $row.Fields .}}</td>{{end}}</tr>{{end}}</tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:.78rem; margin:.2rem 0 0;">{{.Total}} rows{{if lt .Shown .Total}} (showing {{.Shown}}){{end}}</p>
+  {{else}}<div class="empty">No rows.</div>{{end}}
+{{end}}
+{{end}}

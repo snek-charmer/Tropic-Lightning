@@ -18,6 +18,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/deck"
 	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/views"
@@ -125,7 +126,15 @@ func run() error {
 	defer combineStore.Close()
 	combineService := combine.NewService(combineStore, datasetService)
 
-	srv, err := web.NewServer(authn, cfg, dsService, datasetService, operatorService, weatherService, httpService, viewService, combineService)
+	// Meeting decks: shared spaces of published visuals.
+	deckStore, err := deck.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer deckStore.Close()
+	deckService := deck.NewService(deckStore)
+
+	srv, err := web.NewServer(authn, cfg, dsService, datasetService, operatorService, weatherService, httpService, viewService, combineService, deckService)
 	if err != nil {
 		return err
 	}

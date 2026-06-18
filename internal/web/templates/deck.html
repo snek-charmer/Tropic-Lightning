@@ -1,0 +1,29 @@
+{{define "deck.html"}}
+<div class="crumb"><a href="/decks">← Decks</a></div>
+<div class="page-head toolbar">
+  <div>
+    <h1 style="margin:0;">{{.Deck.Name}}</h1>
+    <p class="muted" style="margin:.2rem 0 0; font-size:.85rem;">{{len .Panels}} published visual(s) · live against current data</p>
+  </div>
+</div>
+
+{{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
+
+{{if .Panels}}
+  {{range .Panels}}
+  <div class="card">
+    <div class="toolbar" style="margin-bottom:.6rem;">
+      <div>
+        <h2 style="margin:0;">{{.Title}}</h2>
+        <p class="muted" style="margin:.15rem 0 0; font-size:.78rem;">{{.Name}}{{if .By}} · published by {{.By}}{{end}}</p>
+      </div>
+      <span class="spacer"></span>
+      <form method="POST" action="/decks/{{.DeckID}}/slides/{{.SlideID}}/delete" onsubmit="return confirm('Remove this slide?');" style="display:inline;"><button class="btn sm danger" type="submit">Remove</button></form>
+    </div>
+    {{ partial "viz_panel.html" . }}
+  </div>
+  {{end}}
+{{else}}
+  <div class="card"><div class="empty">No visuals published yet. Open a dataset, filter/visualize it, and use <strong>Publish to deck</strong>.</div></div>
+{{end}}
+{{end}}

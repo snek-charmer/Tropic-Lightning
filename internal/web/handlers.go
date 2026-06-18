@@ -24,6 +24,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/deck"
 	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/views"
@@ -53,11 +54,12 @@ type Server struct {
 	httpsource  *httpsource.Service
 	views       *views.Service
 	combine     *combine.Service
+	deck        *deck.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
 // weather and httpsrc may be nil (no live connectors configured).
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service, httpsrc *httpsource.Service, vw *views.Service, cmb *combine.Service) (*Server, error) {
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, dsets *dataset.Service, ops *operators.Service, wx *weather.Service, httpsrc *httpsource.Service, vw *views.Service, cmb *combine.Service, dk *deck.Service) (*Server, error) {
 	// tmpl is captured by the partial func below; assigned after parsing so the
 	// shared layout can render a page's content block by name.
 	var tmpl *template.Template
@@ -81,7 +83,7 @@ func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Ser
 		return nil, err
 	}
 	tmpl = t
-	return &Server{auth: authn, cfg: cfg, templates: t, dataSources: ds, datasets: dsets, operators: ops, weather: wx, httpsource: httpsrc, views: vw, combine: cmb}, nil
+	return &Server{auth: authn, cfg: cfg, templates: t, dataSources: ds, datasets: dsets, operators: ops, weather: wx, httpsource: httpsrc, views: vw, combine: cmb, deck: dk}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -142,6 +144,14 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /catalog", authed(s.handleCatalogPage))
 	mux.Handle("POST /catalog/{key}/subscribe", authed(s.handleSubscribe))
 	mux.Handle("POST /catalog/{key}/unsubscribe", authed(s.handleUnsubscribe))
+
+	// Meeting decks: publish filtered visuals to a shared space.
+	mux.Handle("GET /decks", authed(s.handleDecksPage))
+	mux.Handle("POST /decks", authed(s.handleDeckCreate))
+	mux.Handle("GET /decks/{id}", authed(s.handleDeckView))
+	mux.Handle("POST /decks/{id}/delete", authed(s.handleDeckDelete))
+	mux.Handle("POST /decks/{id}/slides/{sid}/delete", authed(s.handleSlideDelete))
+	mux.Handle("POST /datasets/{collection}/publish", authed(s.handlePublish))
 
 	// Combine data sources: any authenticated user joins two sources by a key.
 	mux.Handle("GET /combine/new", authed(s.handleCombineNew))
@@ -894,7 +904,18 @@ func (s *Server) handleDatasetView(w http.ResponseWriter, r *http.Request) {
 		"SavedViews":    vms,
 		"HasViews":      s.views != nil,
 		"ActiveView":    activeView,
+		"CanPublish":    s.deck != nil,
+		"Decks":         s.decksFor(ctx),
 	})
+}
+
+// decksFor lists decks for the publish control (nil-safe; empty on error).
+func (s *Server) decksFor(ctx context.Context) []deck.Deck {
+	if s.deck == nil {
+		return nil
+	}
+	decks, _ := s.deck.ListDecks(ctx)
+	return decks
 }
 
 // viewQuery encodes a saved view as the querystring that re-applies it.
@@ -1604,6 +1625,215 @@ func (s *Server) handleCombineDelete(w http.ResponseWriter, r *http.Request) {
 
 // datasetDisplayLimit caps how many rows the dataset table renders at once.
 const datasetDisplayLimit = 200
+
+// --- meeting decks: publish visuals to a shared space ---
+
+// deckPanelLimit caps table rows rendered per slide so a deck page stays light.
+const deckPanelLimit = 100
+
+// panel is a rendered visual (chart or table) for a slide's live spec.
+type panel struct {
+	Title, By, At   string
+	SlideID, DeckID string
+	Name            string
+	Columns         []string
+	Rows            []dataset.Row
+	Total, Shown    int
+	ViewType        string
+	ViewGroupBy     string
+	ViewValueCol    string
+	ViewAgg         string
+	WheelSegments   []wheelSegment
+	WheelGradient   template.CSS
+	Bars            []barVM
+	Stats           statsVM
+	Line            lineVM
+	HasLine         bool
+	Err             string
+}
+
+// loadDataset reads a dataset's name/columns/rows, transparently computing a
+// combined source if the collection is one.
+func (s *Server) loadDataset(ctx context.Context, collection string) (string, []string, []dataset.Row, error) {
+	if s.combine != nil {
+		if _, ok, _ := s.combine.Get(ctx, collection); ok {
+			res, err := s.combine.Compute(ctx, collection)
+			return res.Name, res.Columns, res.Rows, err
+		}
+	}
+	return s.datasets.View(ctx, collection)
+}
+
+// renderSlidePanel re-computes a slide's visual from its live spec. A missing
+// source yields a panel with Err set rather than failing the whole deck.
+func (s *Server) renderSlidePanel(ctx context.Context, sl deck.Slide) panel {
+	p := panel{
+		Title: sl.Title, By: sl.PublishedBy, At: sl.PublishedAt, SlideID: sl.ID, DeckID: sl.DeckID,
+		ViewType: sl.ViewType, ViewGroupBy: sl.GroupBy, ViewValueCol: sl.ValueCol, ViewAgg: firstNonEmpty(sl.Agg, "count"),
+	}
+	name, cols, rows, err := s.loadDataset(ctx, sl.Collection)
+	if err != nil {
+		p.Name = firstNonEmpty(sl.DatasetName, sl.Collection)
+		p.Err = "source unavailable"
+		return p
+	}
+	p.Name, p.Columns = name, cols
+	filtered := rows
+	if (sl.FilterCol != "" && sl.FilterVal != "") || sl.Query != "" {
+		filtered = filtered[:0:0]
+		for _, row := range rows {
+			if rowMatches(row.Fields, sl.FilterCol, sl.FilterVal, sl.Query) {
+				filtered = append(filtered, row)
+			}
+		}
+	}
+	p.Total = len(filtered)
+	shown := filtered
+	if len(shown) > deckPanelLimit {
+		shown = shown[:deckPanelLimit]
+	}
+	p.Rows, p.Shown = shown, len(shown)
+	switch p.ViewType {
+	case "wheel":
+		if p.ViewGroupBy != "" {
+			p.WheelSegments, p.WheelGradient = computeWheel(filtered, p.ViewGroupBy)
+		}
+	case "bar":
+		p.Bars = computeBars(filtered, p.ViewGroupBy, p.ViewValueCol, p.ViewAgg)
+	case "line":
+		p.Line, p.HasLine = computeLine(filtered, p.ViewGroupBy, p.ViewValueCol, p.ViewAgg)
+	case "stats":
+		p.Stats = computeStats(filtered, p.ViewValueCol)
+	}
+	return p
+}
+
+// handleDecksPage lists all decks (any authenticated user) with a create form.
+func (s *Server) handleDecksPage(w http.ResponseWriter, r *http.Request) {
+	if s.deck == nil {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	decks, err := s.deck.ListDecks(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list decks: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.render(w, r, "decks.html", "Decks", "decks", map[string]any{
+		"Decks": decks,
+		"Error": r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handleDeckCreate(w http.ResponseWriter, r *http.Request) {
+	if s.deck == nil {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	_ = r.ParseForm()
+	d, err := s.deck.CreateDeck(r.Context(), r.PostFormValue("name"), s.effectiveUser(r))
+	if err != nil {
+		http.Redirect(w, r, "/decks?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/decks/"+d.ID, http.StatusSeeOther)
+}
+
+// handleDeckView renders a deck: every slide re-rendered from its live spec.
+func (s *Server) handleDeckView(w http.ResponseWriter, r *http.Request) {
+	if s.deck == nil {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	id := r.PathValue("id")
+	d, ok, err := s.deck.GetDeck(r.Context(), id)
+	if err != nil || !ok {
+		http.Error(w, "deck not found", http.StatusNotFound)
+		return
+	}
+	slides, _ := s.deck.Slides(r.Context(), id)
+	panels := make([]panel, 0, len(slides))
+	for _, sl := range slides {
+		panels = append(panels, s.renderSlidePanel(r.Context(), sl))
+	}
+	s.render(w, r, "deck.html", d.Name, "decks", map[string]any{
+		"Deck":   d,
+		"Panels": panels,
+		"Error":  r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) handleDeckDelete(w http.ResponseWriter, r *http.Request) {
+	if s.deck != nil {
+		if err := s.deck.DeleteDeck(r.Context(), r.PathValue("id")); err != nil {
+			http.Redirect(w, r, "/decks?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+	}
+	http.Redirect(w, r, "/decks", http.StatusSeeOther)
+}
+
+func (s *Server) handleSlideDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.deck != nil {
+		_ = s.deck.DeleteSlide(r.Context(), r.PathValue("sid"))
+	}
+	http.Redirect(w, r, "/decks/"+id, http.StatusSeeOther)
+}
+
+// handlePublish publishes the current dataset view (filter + visualization) as a
+// slide on an existing deck, or a new deck if a name is given.
+func (s *Server) handlePublish(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if !s.canAccessDataset(r, collection) {
+		s.forbidden(w, r)
+		return
+	}
+	if s.deck == nil {
+		http.Redirect(w, r, "/datasets/"+collection, http.StatusSeeOther)
+		return
+	}
+	_ = r.ParseForm()
+	back := "/datasets/" + collection
+	if bq := r.PostFormValue("back"); bq != "" {
+		back = "/datasets/" + collection + "?" + bq
+	}
+	fail := func(msg string) { http.Redirect(w, r, back+"&error="+url.QueryEscape(msg), http.StatusSeeOther) }
+
+	deckID := r.PostFormValue("deck")
+	if newName := strings.TrimSpace(r.PostFormValue("new_deck")); newName != "" {
+		d, err := s.deck.CreateDeck(r.Context(), newName, s.effectiveUser(r))
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		deckID = d.ID
+	}
+	if deckID == "" {
+		fail("choose a deck or name a new one")
+		return
+	}
+	name, _, _, _ := s.loadDataset(r.Context(), collection)
+	_, err := s.deck.AddSlide(r.Context(), deck.Slide{
+		DeckID:      deckID,
+		Title:       r.PostFormValue("title"),
+		Collection:  collection,
+		DatasetName: name,
+		FilterCol:   r.PostFormValue("col"),
+		FilterVal:   r.PostFormValue("val"),
+		Query:       r.PostFormValue("q"),
+		ViewType:    r.PostFormValue("vtype"),
+		GroupBy:     r.PostFormValue("vgroup"),
+		ValueCol:    r.PostFormValue("vval"),
+		Agg:         r.PostFormValue("vagg"),
+		PublishedBy: s.effectiveUser(r),
+	})
+	if err != nil {
+		fail(err.Error())
+		return
+	}
+	http.Redirect(w, r, "/decks/"+deckID, http.StatusSeeOther)
+}
 
 // --- helpers ---
 

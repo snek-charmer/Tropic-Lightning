@@ -158,6 +158,19 @@ in the catalog, subscribable, filterable, and chartable (e.g. *avg temp by base*
 over `roster ⋈ weather`). It's **read-only** (derived). Members are generic
 sources (file / weather / HTTP). Lives in `internal/combine/`.
 
+### Decks (publish visuals to a shared space)
+
+Turn the platform into a briefing space: from any dataset view, **Publish to a
+deck** captures the current filter + visualization as a **slide** on a shared
+**deck** (`/decks`). A deck is one scrollable page of everyone's published
+visuals — run a meeting from it, with each slide **re-rendered live** from
+current data when the deck is opened (a slide stores the view spec, not a frozen
+copy). Decks are shared: any authenticated user can create one, publish to it,
+and view it. A missing source degrades to a "source unavailable" note rather
+than breaking the deck. Lives in `internal/deck/` (decks + slides in peat); the
+visual itself is rendered by the shared `viz_panel` template, the same renderer
+the dataset view uses.
+
 ### Saved views
 
 Filtering the same way every time you open a dataset gets old, so users can
@@ -275,7 +288,7 @@ cluster), not part of this package.
 
 ```bash
 # Build the image, then create the package (pulls the image from your daemon).
-docker build -t keycloak-portal:0.1.27 .
+docker build -t keycloak-portal:0.1.28 .
 zarf package create deploy/zarf --confirm
 
 # On the target cluster (must be `zarf init`-ed), deploy with your values:
@@ -308,7 +321,7 @@ and the UDS Operator takes over the wiring:
   node and Keycloak.
 
 ```bash
-docker build -t keycloak-portal:0.1.27 .
+docker build -t keycloak-portal:0.1.28 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \

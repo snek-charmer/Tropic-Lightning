@@ -16,6 +16,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/combine"
 	"github.com/defenseunicorns/keycloak-portal/internal/dataset"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/deck"
 	"github.com/defenseunicorns/keycloak-portal/internal/httpsource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/views"
@@ -29,7 +30,7 @@ func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	ds := datasource.NewService(datasource.NewMemoryStore())
 	dsets := dataset.NewService(dataset.NewMemoryStore(), ds, nil)
 	ops := operators.NewService(operators.NewMemoryStore())
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsets, ops, nil, nil, nil, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsets, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -624,7 +625,7 @@ func TestCatalogReconcilesUploadedDatasets(t *testing.T) {
 	_, _ = ds.Create(ctx, datasource.Input{Name: "Roster", Type: "file", Endpoint: "dataset://ds_roster", Enabled: true})
 	ops := operators.NewService(operators.NewMemoryStore())
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil, nil, nil, nil)
+		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -656,7 +657,7 @@ func TestSelfSubscribeGrantsAccess(t *testing.T) {
 	dsvc := dataset.NewService(dstore, ds, nil)
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil, nil)
 	h := srv.Routes()
 	tok := kc.SignToken(t, map[string]any{"preferred_username": "s1", "realm_access": map[string]any{"roles": []string{"user"}}})
 	req := func(method, target string) *httptest.ResponseRecorder {
@@ -708,7 +709,7 @@ func TestOperatorCanEditAssignedDataset(t *testing.T) {
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, nil)
+		dsvc, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -760,7 +761,7 @@ func TestOperatorUpdatesExistingRow(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil, nil)
 	h := srv.Routes()
 
 	tok := kc.SignToken(t, map[string]any{"preferred_username": "s4", "realm_access": map[string]any{"roles": []string{"user"}}})
@@ -795,7 +796,7 @@ func TestOperatorBulkSave(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil, nil)
 	h := srv.Routes()
 
 	body := `{"rows":[{"id":"r000001","fields":{"name":"Alice","status":"grounded"}},{"id":"","fields":{"name":"Bob","status":"ok"}}],"deletes":[]}`
@@ -887,7 +888,7 @@ func TestDatasetStatusWheel(t *testing.T) {
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, nil)
+		dsvc, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -938,7 +939,7 @@ func TestWeatherConnectorCreateFlow(t *testing.T) {
 	wx.SetBaseURL(api.URL)
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, wx, nil, nil, nil)
+		dsvc, ops, wx, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -997,7 +998,7 @@ func TestHTTPSourceCreateAndRefresh(t *testing.T) {
 	hs := httpsource.NewService(httpsource.NewMemoryStore(), dstore, nil)
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, hs, nil, nil)
+		dsvc, ops, nil, hs, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1055,7 +1056,7 @@ func TestSavedViewsFlow(t *testing.T) {
 	vw := views.NewService(views.NewMemoryStore())
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, vw, nil)
+		dsvc, ops, nil, nil, vw, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1159,7 +1160,7 @@ func TestSavedViewsSwitch(t *testing.T) {
 	ready, _ := vw.Save(ctx, views.View{Owner: "alice", Collection: "ds_x", Name: "Ready", FilterCol: "status", FilterVal: "ready"})
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, vw, nil)
+		dsvc, ops, nil, nil, vw, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1209,7 +1210,7 @@ func TestDatasetBarAndStats(t *testing.T) {
 	_ = ops.RegisterDataset(ctx, "ds_r", "Roster", operators.KindGeneric, "ds_r")
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, nil)
+		dsvc, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1256,7 +1257,7 @@ func TestVizSwitchApplies(t *testing.T) {
 	ops := operators.NewService(operators.NewMemoryStore())
 	_ = ops.RegisterDataset(ctx, "ds_r", "R", operators.KindGeneric, "ds_r")
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, nil)
+		dsvc, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1307,7 +1308,7 @@ func TestCombineSourcesFlow(t *testing.T) {
 	cmb := combine.NewService(combine.NewMemoryStore(), dsvc)
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, cmb)
+		dsvc, ops, nil, nil, nil, cmb, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1380,7 +1381,7 @@ func TestViewAsPersonaInCatalog(t *testing.T) {
 	_ = ops.Subscribe(ctx, "ds_roster", "s4")
 
 	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
-		dsvc, ops, nil, nil, nil, nil)
+		dsvc, ops, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -1466,7 +1467,7 @@ func TestCombineDeleteRemovesFromCatalog(t *testing.T) {
 	_ = ops.RegisterDataset(ctx, "ds_a", "A", operators.KindGeneric, "ds_a")
 	_ = ops.RegisterDataset(ctx, "ds_b", "B", operators.KindGeneric, "ds_b")
 	cmb := combine.NewService(combine.NewMemoryStore(), dsvc)
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, cmb)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, cmb, nil)
 	h := srv.Routes()
 	tok := adminToken(t, kc)
 	post := func(target string) {
@@ -1517,7 +1518,7 @@ func TestCombinePreviewAndForgivingMatch(t *testing.T) {
 	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
 	_ = ops.RegisterDataset(ctx, "ds_wx", "Weather", operators.KindGeneric, "ds_wx")
 	cmb := combine.NewService(combine.NewMemoryStore(), dsvc)
-	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, cmb)
+	srv, _ := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, cmb, nil)
 	h := srv.Routes()
 	tok := adminToken(t, kc)
 
@@ -1551,5 +1552,66 @@ func TestCombinePreviewAndForgivingMatch(t *testing.T) {
 	body := vrr.Body.String()
 	if !strings.Contains(body, "1 of 2 rows matched") || !strings.Contains(body, ">31<") {
 		t.Errorf("combined view should show match info + the joined temp value")
+	}
+}
+
+func TestPublishToDeckFlow(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	dstore := dataset.NewMemoryStore()
+	_ = dstore.PutMeta(ctx, "ds_r", "Roster", []string{"name", "status"})
+	_ = dstore.PutRow(ctx, "ds_r", "r1", map[string]string{"name": "A", "status": "ready"})
+	_ = dstore.PutRow(ctx, "ds_r", "r2", map[string]string{"name": "B", "status": "down"})
+	dsvc := dataset.NewService(dstore, ds, nil)
+	ops := operators.NewService(operators.NewMemoryStore())
+	_ = ops.RegisterDataset(ctx, "ds_r", "Roster", operators.KindGeneric, "ds_r")
+	dk := deck.NewService(deck.NewMemoryStore())
+
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, dsvc, ops, nil, nil, nil, nil, dk)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+	tok := adminToken(t, kc)
+
+	// Publish a status-wheel view filtered to status=down into a brand-new deck.
+	form := url.Values{
+		"title": {"Down roster"}, "new_deck": {"Sync"},
+		"col": {"status"}, "val": {"down"},
+		"vtype": {"wheel"}, "vgroup": {"status"},
+	}
+	pr := httptest.NewRequest(http.MethodPost, "/datasets/ds_r/publish", strings.NewReader(form.Encode()))
+	pr.Header.Set("Authorization", "Bearer "+tok)
+	pr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	prr := httptest.NewRecorder()
+	h.ServeHTTP(prr, pr)
+	loc := prr.Header().Get("Location")
+	if prr.Code != http.StatusSeeOther || !strings.HasPrefix(loc, "/decks/dk") {
+		t.Fatalf("publish = %d -> %q", prr.Code, loc)
+	}
+
+	// The deck renders the published visual live (wheel grouped by status, only
+	// the filtered 'down' row → 1 segment).
+	dr := httptest.NewRequest(http.MethodGet, loc, nil)
+	dr.Header.Set("Authorization", "Bearer "+tok)
+	drr := httptest.NewRecorder()
+	h.ServeHTTP(drr, dr)
+	body := drr.Body.String()
+	if !strings.Contains(body, "Down roster") || !strings.Contains(body, "conic-gradient") {
+		t.Error("deck should render the published wheel visual")
+	}
+	if !strings.Contains(body, ">down<") || strings.Contains(body, ">ready<") {
+		t.Error("published slide should honor the saved filter (down only)")
+	}
+
+	// The deck is listed for everyone.
+	lr := httptest.NewRequest(http.MethodGet, "/decks", nil)
+	lr.Header.Set("Authorization", "Bearer "+tok)
+	lrr := httptest.NewRecorder()
+	h.ServeHTTP(lrr, lr)
+	if !strings.Contains(lrr.Body.String(), "Sync") {
+		t.Error("decks page should list the new deck")
 	}
 }

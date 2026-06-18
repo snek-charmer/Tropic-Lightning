@@ -207,6 +207,29 @@
   <p class="muted" style="font-size:.8rem; margin:.5rem 0 0;">Wheel / bar / line group by the <strong>category</strong> column. Bar &amp; line aggregate the <strong>value column</strong> per category (or just count rows). Summary stats use the value column.</p>
 </details>
 
+{{if .CanPublish}}
+<details class="card tight">
+  <summary style="cursor:pointer; font-weight:600;">Publish to a deck <span class="muted" style="font-weight:400;">— share this visual to a shared meeting space</span></summary>
+  <form method="POST" action="/datasets/{{$coll}}/publish" class="inline-fields" style="margin-top:1rem;">
+    <input type="hidden" name="back" value="{{$bq}}">
+    <input type="hidden" name="col" value="{{.FilterCol}}">
+    <input type="hidden" name="val" value="{{.FilterVal}}">
+    <input type="hidden" name="q" value="{{.FilterQuery}}">
+    <input type="hidden" name="vtype" value="{{.ViewType}}">
+    <input type="hidden" name="vgroup" value="{{.ViewGroupBy}}">
+    <input type="hidden" name="vval" value="{{.ViewValueCol}}">
+    <input type="hidden" name="vagg" value="{{.ViewAgg}}">
+    <div class="field"><label>Slide title</label><input type="text" name="title" placeholder="e.g. {{.Name}} — current view"></div>
+    <div class="field"><label>Deck</label>
+      <select name="deck" style="width:auto;"><option value="">— choose a deck —</option>{{range .Decks}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select>
+    </div>
+    <div class="field"><label>…or new deck</label><input type="text" name="new_deck" placeholder="new deck name"></div>
+    <div class="field"><button class="btn" type="submit">Publish</button></div>
+  </form>
+  <p class="muted" style="font-size:.8rem; margin:.5rem 0 0;">Publishes the current filter + visualization (live — it re-renders from the latest data when the deck is opened).</p>
+</details>
+{{end}}
+
 <div class="card">
   {{if $edit}}
   <div class="toolbar" style="margin-bottom:.75rem;">
