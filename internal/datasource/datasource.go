@@ -46,7 +46,7 @@ type StatusProvider interface {
 }
 
 // KnownTypes are the connection types offered in the UI. "other" is a catch-all.
-var KnownTypes = []string{"postgres", "mysql", "s3", "http", "mqtt", "kafka", "other"}
+var KnownTypes = []string{"postgres", "mysql", "s3", "http", "mqtt", "kafka", "file", "other"}
 
 // ValidationError is a user-facing input error (maps to HTTP 400).
 type ValidationError struct{ Msg string }

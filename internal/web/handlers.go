@@ -10,11 +10,13 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 )
 
 //go:embed templates/*.html
@@ -32,15 +34,16 @@ type Server struct {
 	cfg         *config.Config
 	templates   *template.Template
 	dataSources *datasource.Service
+	pilots      *pilots.Service
 }
 
 // NewServer parses templates and returns a Server ready to register routes.
-func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service) (*Server, error) {
+func NewServer(authn *auth.Authenticator, cfg *config.Config, ds *datasource.Service, pl *pilots.Service) (*Server, error) {
 	tmpl, err := template.ParseFS(templateFS, "templates/*.html")
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds}, nil
+	return &Server{auth: authn, cfg: cfg, templates: tmpl, dataSources: ds, pilots: pl}, nil
 }
 
 // Routes wires up the HTTP routes and middleware, returning the root handler.
@@ -79,6 +82,11 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/datasources", admin(s.handleDataSourcesList))
 	mux.Handle("POST /api/datasources", admin(s.handleDataSourceCreate))
 	mux.Handle("DELETE /api/datasources/{id}", admin(s.handleDataSourceDelete))
+
+	// Pilots dataset (admin-only): view + import into peat.
+	mux.Handle("GET /pilots", admin(s.handlePilotsPage))
+	mux.Handle("POST /pilots/import", admin(s.handlePilotsImport))
+	mux.Handle("GET /api/pilots", admin(s.handlePilotsList))
 
 	return logging(mux)
 }
@@ -345,6 +353,61 @@ func (s *Server) handleDataSourceDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- pilots dataset (admin only) ---
+
+// pilotsDisplayLimit caps how many rows the HTML table renders (the full set is
+// still ingested and available via /api/pilots).
+const pilotsDisplayLimit = 200
+
+// handlePilotsPage shows the imported pilots with an Import button and mesh status.
+func (s *Server) handlePilotsPage(w http.ResponseWriter, r *http.Request) {
+	all, err := s.pilots.List(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list pilots: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	shown := all
+	if len(shown) > pilotsDisplayLimit {
+		shown = shown[:pilotsDisplayLimit]
+	}
+	_, connected := s.peatStatus(r.Context())
+	s.render(w, "pilots.html", map[string]any{
+		"Pilots":        shown,
+		"Total":         len(all),
+		"Shown":         len(shown),
+		"Limit":         pilotsDisplayLimit,
+		"Imported":      r.URL.Query().Get("imported"),
+		"Error":         r.URL.Query().Get("error"),
+		"PeatConnected": connected,
+	})
+}
+
+// handlePilotsImport ingests the embedded dataset into peat, then redirects back.
+func (s *Server) handlePilotsImport(w http.ResponseWriter, r *http.Request) {
+	// Bound the bulk write so a slow/unreachable node doesn't hang the request.
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	n, err := s.pilots.Import(ctx)
+	if err != nil {
+		http.Redirect(w, r, "/pilots?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/pilots?imported="+strconv.Itoa(n), http.StatusSeeOther)
+}
+
+// handlePilotsList is the JSON API listing of ingested pilots.
+func (s *Server) handlePilotsList(w http.ResponseWriter, r *http.Request) {
+	all, err := s.pilots.List(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if all == nil {
+		all = []pilots.Pilot{}
+	}
+	writeJSON(w, http.StatusOK, all)
 }
 
 // --- helpers ---

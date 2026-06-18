@@ -61,7 +61,12 @@
       "Bash(git cherry-pick *)",
       "Bash(git pull *)",
       "Bash(sed -i 's#| GET    | `/api/admin`     | requires `admin` realm role \\(JSON\\)   |#| GET    | `/api/admin`     | admin \\(realm role `admin` or admin group\\) |#' README.md)",
-      "Bash(sed -i 's#| GET    | `/datasources`   | `admin` realm role \\(HTML page\\)       |#| GET    | `/datasources`   | admin \\(realm role or admin group\\), HTML |#' README.md)"
+      "Bash(sed -i 's#| GET    | `/datasources`   | `admin` realm role \\(HTML page\\)       |#| GET    | `/datasources`   | admin \\(realm role or admin group\\), HTML |#' README.md)",
+      "Bash(env)",
+      "Bash(git stash *)",
+      "Bash(mkdir -p internal/pilots/data)",
+      "Bash(unzip -l internal/pilots/data/usaf_pilots_synthetic.xlsx)",
+      "Bash(unzip -p internal/pilots/data/usaf_pilots_synthetic.xlsx xl/workbook.xml)"
     ]
   }
 }

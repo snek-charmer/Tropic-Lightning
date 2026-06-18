@@ -1,0 +1,71 @@
+{{define "pilots.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>USAF Pilots · Keycloak Portal</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 3rem auto; padding: 0 1rem; color: #1a1a2e; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 1.5rem 2rem; margin-bottom: 1.5rem; }
+    h1 { margin-top: 0; }
+    .btn { display: inline-block; background: #4636f5; color: #fff; border: none; padding: .6rem 1.2rem; border-radius: 8px; font: inherit; font-weight: 600; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; margin-top: .5rem; font-size: .85rem; }
+    th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid #eee; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #fafafe; }
+    .wrap { overflow-x: auto; }
+    .muted { color: #777; }
+    .ok { background: #e6f7ed; color: #1c7a44; padding: .6rem 1rem; border-radius: 8px; }
+    .err { background: #fff0f0; color: #d63031; padding: .6rem 1rem; border-radius: 8px; }
+    .pill { display:inline-block; padding:.15rem .6rem; border-radius:999px; font-size:.75rem; font-weight:700; }
+    .green { background:#e6f7ed; color:#1c7a44; } .red { background:#fff6e0; color:#946200; }
+    code { background: #f4f4f8; padding: .1rem .35rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">← Dashboard</a></p>
+  <h1>USAF Pilots <span class="muted">(MHS Genesis synthetic)</span></h1>
+
+  {{if .Imported}}<p class="ok">Imported {{.Imported}} pilots into the peat mesh.</p>{{end}}
+  {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+
+  <div class="card">
+    <p>
+      Mesh:
+      {{if .PeatConnected}}<span class="pill green">connected</span>{{else}}<span class="pill red">disconnected</span>{{end}}
+      &nbsp; Stored pilots: <strong>{{.Total}}</strong>
+    </p>
+    <p>Import the embedded dataset into the peat node (collection <code>pilots</code>).
+       Records persist on this edge node and sync across the mesh.</p>
+    <form method="POST" action="/pilots/import">
+      <button class="btn" type="submit">Import dataset</button>
+    </form>
+    <p class="muted" style="margin-top:.75rem;">Full set available at <code>GET /api/pilots</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>Pilots {{if lt .Shown .Total}}<span class="muted">(showing first {{.Shown}} of {{.Total}})</span>{{end}}</h2>
+    {{if .Pilots}}
+    <div class="wrap">
+    <table>
+      <thead><tr>
+        <th>ID</th><th>Age</th><th>Gender</th><th>Rank</th><th>Base</th><th>Aircraft</th>
+        <th>Hrs (total)</th><th>Hrs (12mo)</th><th>Aeromed class</th><th>Dental</th><th>PHA date</th><th>PHA status</th>
+      </tr></thead>
+      <tbody>
+        {{range .Pilots}}
+        <tr>
+          <td><code>{{.PilotID}}</code></td><td>{{.Age}}</td><td>{{.Gender}}</td><td>{{.Rank}}</td>
+          <td>{{.Base}}</td><td>{{.Aircraft}}</td><td>{{.FlightHoursTotal}}</td><td>{{.FlightHoursLast12mo}}</td>
+          <td>{{.AeromedicalClass}}</td><td>{{if eq .DentalReadiness 1}}ready{{else}}no{{end}}</td>
+          <td>{{.PhaLastDate}}</td><td>{{.PhaStatus}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    </div>
+    {{else}}
+      <p class="muted">No pilots yet. Click <strong>Import dataset</strong> above.</p>
+    {{end}}
+  </div>
+</body>
+</html>{{end}}

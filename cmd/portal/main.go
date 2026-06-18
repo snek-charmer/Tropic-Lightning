@@ -16,6 +16,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/config"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
@@ -67,7 +68,15 @@ func run() error {
 
 	dsService := datasource.NewService(store)
 
-	srv, err := web.NewServer(authn, cfg, dsService)
+	// Pilots dataset, ingested into a separate peat collection on the same node.
+	pilotStore, err := pilots.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer pilotStore.Close()
+	pilotService := pilots.NewService(pilotStore, dsService, slog.Default())
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService)
 	if err != nil {
 		return err
 	}

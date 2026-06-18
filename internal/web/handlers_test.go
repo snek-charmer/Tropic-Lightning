@@ -11,6 +11,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/auth"
 	"github.com/defenseunicorns/keycloak-portal/internal/authtest"
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
+	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
@@ -18,7 +19,8 @@ import (
 func newServer(t *testing.T, kc *authtest.Keycloak) http.Handler {
 	t.Helper()
 	ds := datasource.NewService(datasource.NewMemoryStore())
-	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds)
+	pl := pilots.NewService(pilots.NewMemoryStore(), ds, nil)
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds, pl)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -480,5 +482,58 @@ func TestDataSourcesAccessibleViaAdminGroup(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("group-admin /datasources status = %d, want 200", rec.Code)
+	}
+}
+
+func TestPilotsRequireAdmin(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+
+	userTok := kc.SignToken(t, map[string]any{
+		"preferred_username": "bob",
+		"realm_access":       map[string]any{"roles": []string{"user"}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/pilots", nil)
+	req.Header.Set("Authorization", "Bearer "+userTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin /pilots = %d, want 403", rec.Code)
+	}
+}
+
+func TestPilotsImportAndList(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	h := newServer(t, kc)
+	tok := adminToken(t, kc)
+
+	// Import (form POST) -> redirect with imported count.
+	ireq := httptest.NewRequest(http.MethodPost, "/pilots/import", nil)
+	ireq.Header.Set("Authorization", "Bearer "+tok)
+	irec := httptest.NewRecorder()
+	h.ServeHTTP(irec, ireq)
+	if irec.Code != http.StatusSeeOther {
+		t.Fatalf("import status = %d, want 303", irec.Code)
+	}
+	if loc := irec.Header().Get("Location"); !strings.Contains(loc, "imported=") {
+		t.Errorf("redirect = %q, want imported=", loc)
+	}
+
+	// JSON list now returns pilots.
+	lreq := httptest.NewRequest(http.MethodGet, "/api/pilots", nil)
+	lreq.Header.Set("Authorization", "Bearer "+tok)
+	lrec := httptest.NewRecorder()
+	h.ServeHTTP(lrec, lreq)
+	if lrec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", lrec.Code)
+	}
+	var list []pilots.Pilot
+	if err := json.Unmarshal(lrec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(list) < 100 {
+		t.Errorf("listed %d pilots, want many", len(list))
 	}
 }
