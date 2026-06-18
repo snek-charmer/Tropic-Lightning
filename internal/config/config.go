@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // Config holds all runtime configuration, populated from environment variables.
@@ -59,6 +60,15 @@ type Config struct {
 	// PeatTLS dials the peat node over TLS. Defaults false for the co-located
 	// sidecar pattern (in-pod / localhost plaintext).
 	PeatTLS bool
+
+	// WeatherPollInterval is how often the background poller refreshes live
+	// weather connectors (Open-Meteo) when the node has connectivity. 0 disables
+	// background polling (connectors still refresh on creation). Default 10m.
+	WeatherPollInterval time.Duration
+
+	// WeatherAPIURL overrides the Open-Meteo endpoint, e.g. to point at a
+	// self-hosted mirror in an air-gapped site. Empty uses the public API.
+	WeatherAPIURL string
 }
 
 // Load reads configuration from the environment and validates required fields.
@@ -77,6 +87,8 @@ func Load() (*Config, error) {
 		PeatNodeAddr:          os.Getenv("PEAT_NODE_ADDR"),
 		PeatCollection:        envOr("PEAT_COLLECTION", "data_sources"),
 		PeatTLS:               envOr("PEAT_TLS", "false") == "true",
+		WeatherPollInterval:   parseDurationOr("WEATHER_POLL_INTERVAL", 10*time.Minute),
+		WeatherAPIURL:         os.Getenv("WEATHER_API_URL"),
 	}
 
 	var missing []string
@@ -104,6 +116,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseDurationOr reads a Go duration (e.g. "10m") from the env, falling back
+// to def. "0" or "off" disables (returns 0).
+func parseDurationOr(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if v == "0" || strings.EqualFold(v, "off") {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 func splitScopes(s string) []string {

@@ -2,7 +2,7 @@
 # substituted from zarf.yaml variables at `zarf package deploy` time.
 image:
   repository: keycloak-portal
-  tag: "0.1.13"
+  tag: "0.1.14"
   # Zarf serves the bundled image from the in-cluster registry.
   pullPolicy: IfNotPresent
 
@@ -16,6 +16,7 @@ config:
   peatNodeAddr: "###ZARF_VAR_PEAT_NODE_ADDR###"
   peatCollection: data_sources
   peatTls: ###ZARF_VAR_PEAT_TLS###
+  weatherPollInterval: "###ZARF_VAR_WEATHER_POLL_INTERVAL###"
 
 clientSecret:
   value: "###ZARF_VAR_CLIENT_SECRET###"

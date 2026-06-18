@@ -2,7 +2,7 @@
 kind: ZarfPackageConfig
 metadata:
   name: keycloak-portal
-  version: 0.1.13
+  version: 0.1.14
   description: >-
     Keycloak OIDC portal with peat-backed, edge/disconnected data sources.
     Deploys the portal Helm chart and bundles its container image for
@@ -34,6 +34,9 @@ variables:
   - name: PEAT_TLS
     description: "Dial the peat node over TLS"
     default: "false"
+  - name: WEATHER_POLL_INTERVAL
+    description: "How often to refresh live weather connectors (Open-Meteo) when connected; '0'/'off' disables"
+    default: "10m"
 
 components:
   - name: keycloak-portal
@@ -44,10 +47,10 @@ components:
         namespace: portal
         # Path is relative to this zarf.yaml.
         localPath: ../helm/keycloak-portal
-        version: 0.1.13
+        version: 0.1.14
         valuesFiles:
           - values.yaml
     images:
       # Bundled into the package; the Zarf agent rewrites this to the in-cluster
       # registry at deploy time. Build/tag this image before `zarf package create`.
-      - keycloak-portal:0.1.13
+      - keycloak-portal:0.1.14

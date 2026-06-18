@@ -19,6 +19,7 @@ import (
 	"github.com/defenseunicorns/keycloak-portal/internal/datasource"
 	"github.com/defenseunicorns/keycloak-portal/internal/operators"
 	"github.com/defenseunicorns/keycloak-portal/internal/pilots"
+	"github.com/defenseunicorns/keycloak-portal/internal/weather"
 	"github.com/defenseunicorns/keycloak-portal/internal/web"
 )
 
@@ -100,7 +101,18 @@ func run() error {
 	}
 	regCancel()
 
-	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService)
+	// Live weather connector (Open-Meteo). Connector configs live in peat; the
+	// poller writes current conditions into each connector's generic dataset
+	// (reusing the dataset store) when the node has connectivity.
+	weatherStore, err := weather.NewPeatStore(cfg.PeatNodeAddr, creds)
+	if err != nil {
+		return err
+	}
+	defer weatherStore.Close()
+	weatherService := weather.NewService(weatherStore, datasetStore, slog.Default())
+	weatherService.SetBaseURL(cfg.WeatherAPIURL) // no-op when unset (public API)
+
+	srv, err := web.NewServer(authn, cfg, dsService, pilotService, datasetService, operatorService, weatherService)
 	if err != nil {
 		return err
 	}
@@ -114,6 +126,12 @@ func run() error {
 	// Graceful shutdown on SIGINT/SIGTERM.
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Background weather poller: refresh live connectors on an interval (skips
+	// quietly while the node is offline; resumes on reconnect).
+	if cfg.WeatherPollInterval > 0 {
+		go pollWeather(shutdownCtx, weatherService, cfg.WeatherPollInterval)
+	}
 
 	go func() {
 		slog.Info("starting server", "addr", cfg.ListenAddr, "issuer", cfg.Issuer)
@@ -129,4 +147,26 @@ func run() error {
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelStop()
 	return httpServer.Shutdown(stopCtx)
+}
+
+// pollWeather refreshes every weather connector on each tick until ctx is done.
+// Each poll is bounded so an unreachable upstream or node can't wedge it.
+func pollWeather(ctx context.Context, svc *weather.Service, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pollCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			n, err := svc.Poll(pollCtx)
+			cancel()
+			if err != nil {
+				slog.Warn("weather poll", "refreshed", n, "err", err)
+			} else if n > 0 {
+				slog.Info("weather poll", "refreshed", n)
+			}
+		}
+	}
 }

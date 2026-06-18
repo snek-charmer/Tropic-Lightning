@@ -68,6 +68,33 @@ The gRPC contract is vendored at `proto/peat/sidecar/v1/sidecar.proto` and the
 Go client is generated into `internal/peat/sidecarv1/` (see `proto/README.md`).
 peat is pre-1.0, so re-vendor + regenerate when bumping the node version.
 
+### Live weather connector (Open-Meteo)
+
+Besides files, admins can add a **live weather source**: a set of locations
+(`label, latitude, longitude`) that pulls **current conditions** from
+[Open-Meteo](https://open-meteo.com) into a normal peat dataset. A background
+poller refreshes it on an interval **when the node has connectivity**; while
+disconnected, operators still see the last-synced reading (the DDIL pattern —
+fetch online, cache at the edge). The dataset is assignable and visualizable
+like any other.
+
+- **Air-gapped sites:** set `uds.weather.egress=false` and point
+  `WEATHER_API_URL` at an in-cluster Open-Meteo mirror. `WEATHER_POLL_INTERVAL`
+  (`10m` default; `0`/`off` disables) controls the cadence.
+- Lives in `internal/weather/` (connector config in peat; rows written through
+  the dataset store). The API base URL is overridable for tests/mirrors.
+
+### Per-dataset visualizations
+
+Each dataset chooses how it's rendered, set from the dataset view by admins or
+the assigned operator:
+
+- **Table** (default) — the filterable/editable grid.
+- **Status wheel** — pick a column to group by; the rows are charted as a donut
+  with a legend (counts + percentages), honoring the active filter. This
+  generalizes the pilots readiness wheel to any dataset (weather condition,
+  status, base, …). View config is stored per dataset in the operator registry.
+
 ## Configuration
 
 Copy `.env.example` and set the values, then export them (or use a tool like
@@ -92,6 +119,8 @@ set -a && source .env && set +a
 | `PEAT_NODE_ADDR`                | yes      | peat node gRPC endpoint (e.g. `localhost:50051`) |
 | `PEAT_COLLECTION`               | no       | peat document collection (default `data_sources`) |
 | `PEAT_TLS`                      | no       | Dial the peat node over TLS (default `false`) |
+| `WEATHER_POLL_INTERVAL`         | no       | Live weather refresh cadence (default `10m`; `0`/`off` disables) |
+| `WEATHER_API_URL`               | no       | Override the Open-Meteo endpoint (e.g. an air-gapped mirror) |
 
 ## Run
 
@@ -173,7 +202,7 @@ cluster), not part of this package.
 
 ```bash
 # Build the image, then create the package (pulls the image from your daemon).
-docker build -t keycloak-portal:0.1.13 .
+docker build -t keycloak-portal:0.1.14 .
 zarf package create deploy/zarf --confirm
 
 # On the target cluster (must be `zarf init`-ed), deploy with your values:
@@ -206,7 +235,7 @@ and the UDS Operator takes over the wiring:
   node and Keycloak.
 
 ```bash
-docker build -t keycloak-portal:0.1.13 .
+docker build -t keycloak-portal:0.1.14 .
 zarf package create deploy/zarf --confirm --output deploy/zarf
 uds create deploy/uds --confirm
 uds deploy uds-bundle-keycloak-portal-*.tar.zst --confirm \
