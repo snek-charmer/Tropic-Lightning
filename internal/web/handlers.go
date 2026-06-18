@@ -259,18 +259,25 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// polls /api/peat/status to keep it live).
 	peat, connected := s.peatStatus(r.Context())
 
-	// Persona view: admins can preview the operator (s1) view via ?view=operator.
+	// Persona view: admins can preview the operator view, and may preview a
+	// *specific* operator's assignments via ?view=operator&as=<username>.
 	isAdmin := s.auth.IsAdmin(claims)
 	view := "operator"
+	previewAs := s.operatorName(claims) // default: the current user
+	var opList []operators.Operator
 	if isAdmin {
 		view = "admin"
 		if r.URL.Query().Get("view") == "operator" {
 			view = "operator"
+			if as := r.URL.Query().Get("as"); as != "" {
+				previewAs = as
+			}
 		}
+		opList, _ = s.operators.ListOperators(r.Context())
 	}
 
-	// Datasets assigned to this user (the operator view's "Your datasets").
-	myDatasets, _ := s.operators.DatasetsForOperator(r.Context(), s.operatorName(claims))
+	// Datasets assigned to the previewed user (the operator view's "Your datasets").
+	myDatasets, _ := s.operators.DatasetsForOperator(r.Context(), previewAs)
 
 	s.render(w, "dashboard.html", map[string]any{
 		"Username":      firstNonEmpty(claims.PreferredUsername, claims.Name, claims.Subject),
@@ -280,6 +287,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"ClientRoles":   clientRoles,
 		"IsAdmin":       isAdmin,
 		"View":          view, // "admin" | "operator"
+		"Operators":     opList,
+		"PreviewAs":     previewAs,
 		"MyDatasets":    myDatasets,
 		"PeatConnected": connected,
 		"Peat":          peat,
@@ -592,7 +601,33 @@ func (s *Server) forbidden(w http.ResponseWriter, r *http.Request) {
 
 // --- operators & assignments (admin only) ---
 
+// reconcileDatasets ensures the assignment registry contains the pilots dataset
+// and every uploaded dataset present in the data-source catalog (dataset://
+// entries), so they all show up as assignable. Idempotent; preserves existing
+// assignments.
+func (s *Server) reconcileDatasets(ctx context.Context) {
+	if err := s.operators.RegisterDataset(ctx, "pilots", "USAF Pilots", operators.KindPilots, "pilots"); err != nil {
+		slog.Warn("reconcile pilots dataset", "err", err)
+	}
+	sources, err := s.dataSources.List(ctx)
+	if err != nil {
+		slog.Warn("reconcile: list data sources", "err", err)
+		return
+	}
+	for _, d := range sources {
+		if c, ok := strings.CutPrefix(d.Endpoint, "dataset://"); ok && c != "" {
+			if err := s.operators.RegisterDataset(ctx, c, d.Name, operators.KindGeneric, c); err != nil {
+				slog.Warn("reconcile dataset", "collection", c, "err", err)
+			}
+		}
+	}
+}
+
 func (s *Server) handleOperatorsPage(w http.ResponseWriter, r *http.Request) {
+	// Make sure every dataset (pilots + uploaded, including ones imported before
+	// the assignment registry existed) is registered and therefore assignable.
+	s.reconcileDatasets(r.Context())
+
 	ops, err := s.operators.ListOperators(r.Context())
 	if err != nil {
 		http.Error(w, "failed to list operators: "+err.Error(), http.StatusInternalServerError)

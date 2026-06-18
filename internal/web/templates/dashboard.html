@@ -69,9 +69,18 @@
   {{if .IsAdmin}}
   <div class="card">
     <h2>View as</h2>
-    <p class="muted">Preview the experience for each role.</p>
+    <p class="muted">Preview your admin view, or preview a specific operator's view (their assigned datasets).</p>
     <a class="btn {{if eq .View "admin"}}active{{end}}" href="/dashboard?view=admin">Admin</a>
-    <a class="btn {{if eq .View "operator"}}active{{end}}" href="/dashboard?view=operator" style="margin-left:.4rem;">Operator (s1)</a>
+    <form method="GET" action="/dashboard" style="display:inline-block; margin-left:.4rem;">
+      <input type="hidden" name="view" value="operator">
+      <label>Preview operator:
+        <select name="as" onchange="this.form.submit()" style="padding:.4rem; border-radius:6px; border:1px solid #ccc; font:inherit;">
+          <option value="">— choose —</option>
+          {{range .Operators}}<option value="{{.Username}}" {{if and (eq $.View "operator") (eq $.PreviewAs .Username)}}selected{{end}}>{{.Username}}{{if .DisplayName}} ({{.DisplayName}}){{end}}</option>{{end}}
+        </select>
+      </label>
+      <noscript><button class="btn" type="submit">Preview</button></noscript>
+    </form>
   </div>
   {{end}}
 
@@ -87,7 +96,7 @@
 
   {{if eq .View "operator"}}
   <div class="card">
-    <h2>Your datasets {{if .IsAdmin}}<span class="muted">(operator preview)</span>{{end}}</h2>
+    <h2>Your datasets {{if .IsAdmin}}<span class="muted">(previewing operator <code>{{.PreviewAs}}</code>)</span>{{end}}</h2>
     {{if .MyDatasets}}
       <p class="muted">Datasets assigned to you. Open one to view and filter its data.</p>
       <ul>

@@ -760,3 +760,60 @@ func TestUploadRequiresAdmin(t *testing.T) {
 		t.Errorf("non-admin upload page = %d, want 403", rec.Code)
 	}
 }
+
+func TestAdminPreviewSpecificOperator(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ops := operators.NewService(operators.NewMemoryStore())
+	_, _ = ops.CreateOperator(ctx, "s4", "Op Four")
+	_ = ops.RegisterDataset(ctx, "ds_roster", "Roster", operators.KindGeneric, "ds_roster")
+	_ = ops.SetAssignments(ctx, "ds_roster", []string{"s4"})
+	h := opServer(t, kc, pilots.NewMemoryStore(), ops)
+
+	adminTok := kc.SignToken(t, map[string]any{"preferred_username": "alice", "groups": []string{"/UDS Core/Admin"}})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard?view=operator&as=s4", nil)
+	req.AddCookie(&http.Cookie{Name: auth.AccessTokenCookie, Value: adminTok})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/datasets/ds_roster") {
+		t.Error("previewing s4 should show their assigned dataset link")
+	}
+	if !strings.Contains(body, "s4") {
+		t.Error("preview should indicate operator s4")
+	}
+}
+
+func TestOperatorsPageReconcilesUploadedDatasets(t *testing.T) {
+	kc := authtest.NewKeycloak(t)
+	defer kc.Close()
+	ctx := context.Background()
+	ds := datasource.NewService(datasource.NewMemoryStore())
+	// A dataset imported before the assignment registry existed: only a catalog entry.
+	_, _ = ds.Create(ctx, datasource.Input{Name: "Roster", Type: "file", Endpoint: "dataset://ds_roster", Enabled: true})
+	ops := operators.NewService(operators.NewMemoryStore())
+	srv, err := web.NewServer(kc.Authenticator(t), kc.Config(), ds,
+		pilots.NewService(pilots.NewMemoryStore(), ds, nil),
+		dataset.NewService(dataset.NewMemoryStore(), ds, nil), ops)
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	h := srv.Routes()
+
+	adminTok := kc.SignToken(t, map[string]any{"preferred_username": "alice", "groups": []string{"/UDS Core/Admin"}})
+	req := httptest.NewRequest(http.MethodGet, "/operators", nil)
+	req.Header.Set("Authorization", "Bearer "+adminTok)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/datasets/ds_roster/assign") {
+		t.Error("operators page should list the uploaded dataset as assignable after reconcile")
+	}
+}
