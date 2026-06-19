@@ -1,3 +1,9 @@
+# Use Case for WARHACKER
+
+Maintaining accurate combat readiness visibility across a Brigade formation during 
+island hopping operations, in a Degraded, Disconnected, Intermittent, and Low-bandwidth (DDIL) 
+environment, while sustaining the flexibility to integrate new and existing data sources.
+
 # Keycloak Portal
 
 A Go web portal that authenticates users via **Keycloak** using OpenID Connect
