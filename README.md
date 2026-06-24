@@ -1,3 +1,63 @@
+# Use Case for WARHACKER
+
+Maintaining accurate combat readiness visibility across a Brigade formation during
+island hopping operations, in a Degraded, Disconnected, Intermittent, and Low-bandwidth (DDIL)
+environment, while sustaining the flexibility to integrate new and existing data sources.
+
+## Why peat
+
+In a DDIL environment, formation elements frequently lose connectivity to the rest
+of the mesh for extended periods. A central-server architecture breaks down here —
+nodes need to keep reading and writing locally with no degradation, then reconcile
+automatically once a connection path reopens, with no manual intervention and no
+risk of conflicting or lost updates.
+
+peat's CRDT-based mesh model fit this directly:
+
+- **Local-first operation.** Each node operates independently while disconnected —
+  reads and writes continue uninterrupted, with no dependency on reaching a central
+  server.
+- **Automatic reconciliation.** When a node regains connectivity to any peer, state
+  syncs and merges conflict-free across the mesh — no manual sync step, no
+  central coordinator.
+- **Source flexibility.** The mesh accommodated multiple existing and emerging
+  data feeds without requiring a redesign of the underlying data layer each time
+  a new source was added.
+
+## Outcome
+
+This pattern preserved a consistent, formation-wide readiness picture even when
+individual elements were operating fully disconnected for extended periods —
+closing the gap between "last known status" and "current status" once
+connectivity returned, without requiring operators to manually reconcile data.
+
+## Why peat
+
+In a DDIL environment, formation elements frequently lose connectivity to the rest
+of the mesh for extended periods. A central-server architecture breaks down here —
+nodes need to keep reading and writing locally with no degradation, then reconcile
+automatically once a connection path reopens, with no manual intervention and no
+risk of conflicting or lost updates.
+
+peat's CRDT-based mesh model fit this directly:
+
+- **Local-first operation.** Each node operates independently while disconnected —
+  reads and writes continue uninterrupted, with no dependency on reaching a central
+  server.
+- **Automatic reconciliation.** When a node regains connectivity to any peer, state
+  syncs and merges conflict-free across the mesh — no manual sync step, no
+  central coordinator.
+- **Source flexibility.** The mesh accommodated multiple existing and emerging
+  data feeds without requiring a redesign of the underlying data layer each time
+  a new source was added.
+
+## Outcome
+
+This pattern preserved a consistent, formation-wide readiness picture even when
+individual elements were operating fully disconnected for extended periods —
+closing the gap between "last known status" and "current status" once
+connectivity returned, without requiring operators to manually reconcile data.
+
 # Keycloak Portal
 
 A Go web portal that authenticates users via **Keycloak** using OpenID Connect
